@@ -95,3 +95,37 @@ and it also feeds **Insights & Reports**. Tier + `join_mode` come from the Strip
 - **Per-seat vs usage weighting** — more per-seat (predictable for buyers) vs. more metered (fairer on cost)?
 - **Free-tier cap** (hours + retention) — funnel reach vs. free-cost exposure.
 - **Enterprise = authenticated-join = the paywall line?** (i.e. strict-tenant capability is Enterprise-only.)
+
+---
+
+## Decisions & numbers (2026-07-29)
+
+**Inputs (ADH):** server **€250/mo** (fixed) · LLM **€2 / 1M tokens** · target **50 % gross margin** (floor)
+· structure weighted to **margin-max** (lean on metered usage) · delivery from a **Flexcon sender**.
+
+**Marginal cost per meeting-hour (derived):**
+- LLM ≈ 30k tokens/h → **€0.06/h** · storage ≈ **€0.02/h** (noise).
+- Server €250/mo ÷ capacity (capacity = concurrency × ~176 business-h/mo):
+  C=4 → ~700 h → €0.36/h · C=8 → ~1400 h → €0.18/h.
+- → **marginal cost ≈ €0.25–0.45 / meeting-hour** (server-bound).
+- At 50 % margin (price = 2× cost) → **≈ €0.70 / included meeting-hour** (floor).
+
+**Unit economics — one €250 server:** ~700–1400 meeting-h/mo. At ~20 h/user/mo → **~35–70 paid users per
+server**. Revenue (Pro @ €19) €665–1330 vs. cost ~€300–334 → **50–75 % gross margin.** Cost-covering with
+headroom; each extra server scales linearly.
+
+**Illustrative tiers (confirm the capacity assumption first):**
+| Tier | €/seat/mo | Included | Overage | Notes |
+|---|---|---|---|---|
+| **Pro (DSGVO)** | ~€19 | 20 h/mo | ~€0.90/h | competitive w/ Fireflies, ~2× cost |
+| **Enterprise** | custom (€39+) | custom | custom | authenticated join + max MS-tenant security + SLA |
+
+Overage priced for **margin-max** (≥2× cost); included hours kept modest so heavy use flows to metered.
+
+**Free tier — recommendation: NO perpetual free tier** (matches "präferiert nur paid"). A free user at
+5 h/mo costs ~€2–3.50 + LLM; at ~2–5 % free→paid that's an effective CAC of **~€40–175 / paid user** —
+often worse than direct marketing. Instead: a **14-day full-featured trial** (bounded cost) + put the
+would-be free subsidy into targeted marketing/sales. Revisit only if traction data beats paid CAC.
+
+**One number to confirm:** the server's **meeting-hour capacity** (sustained concurrency) — it swings the
+per-hour cost between €0.18 and €0.71. Give a realistic concurrent-meeting number and the tier prices lock.

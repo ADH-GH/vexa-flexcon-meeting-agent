@@ -133,3 +133,34 @@ per-tenant Agent-Connect API keys · signed webhooks · admin-consent for org-wi
 - **Billing boundary** — free/zero-config (guest join) vs. Enterprise (authenticated join) — same line
   as the join tier?
 - **Recording storage** — shared object store with per-tenant prefixes vs. per-tenant buckets.
+
+---
+
+## Decisions (2026-07-29)
+
+- **Delivery identity:** **Flexcon sender** (consistent branding, simpler consent). User-mailbox optional later.
+- **Guest-join infra:** **one shared bot pool** for all guest joins (authenticated joins get a per-tenant session).
+- **Tenant isolation:** **shared tables + `tenant_id` + Postgres Row-Level Security (RLS)** — forecast below.
+- **Free tier:** paid-only (trial instead) — see `PRICING-DESIGN.md`.
+
+### Tenancy forecast — table-per-tenant vs. one table with `tenant_id` (~1000 tenants)
+**Recommendation: one shared set of tables, `tenant_id` on every row, composite indexes (tenant_id
+first), and Postgres RLS enforcing tenant scope at the database.**
+
+| Model | 1000 tenants | Isolation | Migrations | Verdict |
+|---|---|---|---|---|
+| **Table per tenant** (~6k tables) | catalog bloat (pg_class), autovacuum + plan-cache pressure, backup pain | physical | ALTER ~6000 tables per change | operational wall before 1000; **avoid** |
+| **Schema per tenant** (1000 schemas) | same fan-out + catalog bloat at 1000s | strong | 1000× | OK ~100s, heavy at 1000s |
+| **Shared + tenant_id + RLS** ✅ | trivial — 1000 (even 100k) tenants is nothing; the limit is rows/disk, not tenant count | **DB-enforced** (RLS) | **one** migration | **scales; recommended** |
+
+RLS gives "eindeutig getrennt" **at the DB layer** (Postgres itself blocks cross-tenant reads), not just
+in app code — 1000 tenants is nowhere near any Postgres limit. For customers who demand *physical*
+separation, offer an **optional dedicated DB / on-prem deployment (Enterprise)**.
+
+### Enterprise — maximum MS-tenant security (positioning)
+The security flagship tier: **authenticated Entra join** (no anonymous/guest — works under Conditional
+Access / MFA / lobby-locked tenants) · **admin consent + least-privilege Graph** · **tenant isolation +
+EU data residency** (on-prem option) · **encryption at rest + in transit** · **full per-tenant audit
+trail** · **retention + right-to-erasure / DLP** · **SSO (+ SCIM)** · **no data used for model training**
+· **DPA**. Everything a Microsoft-tenant security/compliance team requires — the reason a regulated
+enterprise picks us over US notetakers.
