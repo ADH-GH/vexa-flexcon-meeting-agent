@@ -1,0 +1,26 @@
+# One-command bring-up: the app + its own Postgres 17.5. Attach to the running diarizer
+# service by putting DIARIZER_URL (and the Vexa/LLM/mail settings) in .env.
+services:
+  app:
+    build: .
+    image: vexa-flexcon-meeting-agent:latest
+    container_name: vfma-app
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql+psycopg://vfma:${POSTGRES_PASSWORD:-vfma}@postgres:5432/vfma
+    depends_on: [postgres]
+    ports:
+      - "127.0.0.1:8080:8080"   # dashboard + API (put behind your reverse proxy)
+  postgres:
+    image: postgres:17.5
+    container_name: vfma-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=vfma
+      - POSTGRES_USER=vfma
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-vfma}
+    volumes:
+      - vfma-pg:/var/lib/postgresql/data
+volumes:
+  vfma-pg:
