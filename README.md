@@ -9,8 +9,9 @@ Reuses the standalone [`diarizer`](https://github.com/ADH-GH/diarizer) service (
 pyannote community-1). Built by **Alf-David Heermann** ([@ADH-GH](https://github.com/ADH-GH), Flexcon IT)
 and **Claude** (Anthropic, Opus 4.8).
 
-> **Status: skeleton (Phase 1).** Runs end-to-end structurally (compose up → dashboard + API + scheduler
-> + migrated Postgres). The heavy module logic is being filled in step by step.
+> **Status: Phase 1 — multi-tenant foundation.** Runs structurally (compose up → dashboard + API +
+> scheduler + migrated Postgres 17.5) with **tenant isolation via Postgres RLS** and an **encrypted
+> token store**. Onboarding + the per-user auto-pipeline are next (see docs/MARKETPLACE-DESIGN.md).
 
 ## What it does (5 pipeline modules)
 
@@ -54,7 +55,7 @@ app/
 
 ## Build phases
 
-1. ✅ Skeleton — FastAPI + Postgres 17.5 + scheduler + models + clients + pipeline scaffold + dashboard shell.
+1. ✅ Skeleton + **multi-tenancy** — FastAPI · Postgres 17.5 · scheduler (per-tenant) · tenants/users · +**RLS** · encrypted token store.
 2. Post-call pipeline — finish + live-test handover · diarize · summarize · deliver (SMTP + Graph, templates).
 3. Dashboard — settings (agent lead · LLM · mail templates · **Insights & Reports** · API keys).
 4. **agent-dispatch** + **Agent-Connect** API (Flexcon Agents).

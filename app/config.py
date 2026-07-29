@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     admin_user: str = "admin"
     admin_password: str = ""          # local fallback login; set in .env
     session_secret: str = "change-me"
+    token_encryption_key: str = ""    # Fernet key for user refresh tokens at rest (set in prod)
+
+    # --- bootstrap tenant (single-tenant testing continuity before onboarding lands) ---
+    bootstrap_tenant_entra_id: str = "flexcon-local"
+    bootstrap_tenant_name: str = "Flexcon (local)"
 
     # --- scheduler cadence (seconds) ---
     poll_postcall_s: int = 600

@@ -31,24 +31,23 @@
   </header>
   <main>
     <div class="cards">
-      {% for status, n in by_status.items() %}
-        <div class="card"><b>{{ n }}</b><span class="muted">{{ status }}</span></div>
-      {% endfor %}
-      <div class="card"><b>{{ delivered }}</b><span class="muted">delivered</span></div>
+      <div class="card"><b>{{ tenants }}</b><span class="muted">Mandanten</span></div>
+      <div class="card"><b>{{ users }}</b><span class="muted">Nutzer</span></div>
+      <div class="card"><b>{{ overview | sum(attribute='total') }}</b><span class="muted">Meetings</span></div>
     </div>
 
-    <h2>Meetings</h2>
+    <h2>Mandanten</h2>
     <table>
-      <tr><th>Titel</th><th>Status</th><th>Sprecher</th><th>Zugestellt</th></tr>
-      {% for m in meetings %}
+      <tr><th>Mandant</th><th>Tier</th><th>Join</th><th>Meetings (nach Status)</th></tr>
+      {% for o in overview %}
       <tr>
-        <td>{{ m.title }}</td>
-        <td><span class="pill">{{ m.status }}</span></td>
-        <td>{{ m.speaker_count if m.speaker_count is not none else "–" }}</td>
-        <td class="muted">{{ m.delivered_at or "–" }}</td>
+        <td>{{ o.tenant.name or o.tenant.entra_tenant_id }}</td>
+        <td><span class="pill">{{ o.tenant.tier }}</span></td>
+        <td class="muted">{{ o.tenant.join_mode }}</td>
+        <td>{% for s, n in o.by_status.items() %}<span class="pill">{{ s }}: {{ n }}</span> {% else %}<span class="muted">–</span>{% endfor %}</td>
       </tr>
       {% else %}
-      <tr><td colspan="4" class="muted">Noch keine Meetings.</td></tr>
+      <tr><td colspan="4" class="muted">Noch keine Mandanten.</td></tr>
       {% endfor %}
     </table>
     <p class="muted" style="margin-top:24px">

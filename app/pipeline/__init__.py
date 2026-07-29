@@ -23,21 +23,21 @@ def _now():
     return dt.datetime.now(dt.timezone.utc)
 
 
-def _log(db, kind, meeting_id="", **detail):
-    db.add(EventLog(kind=kind, meeting_id=str(meeting_id), detail=detail))
+def _log(db, tid, kind, meeting_id="", **detail):
+    db.add(EventLog(tenant_id=tid, kind=kind, meeting_id=str(meeting_id), detail=detail))
 
 
 # --------------------------------------------------------------------------- handover
-def handover(db, vexa: VexaClient) -> None:
+def handover(db, vexa: VexaClient, tid: int) -> None:
     """Land newly-completed Vexa meetings as rows (dedupe/audit)."""
-    have = {m.meeting_id for m in db.scalars(select(Meeting.meeting_id)).all()}
-    have = {r for r in have}
+    have = {m for m in db.scalars(select(Meeting.meeting_id)).all()}
     for m in vexa.completed_meetings():
         mid = str(m.get("id"))
         if mid in have:
             continue
         segs = vexa.transcript(mid).get("segments", [])
         row = Meeting(
+            tenant_id=tid,
             meeting_id=mid,
             native_id=m.get("native_meeting_id", "") or "",
             title=(m.get("data") or {}).get("title") or m.get("constructed_meeting_url") or "Meeting",
@@ -48,7 +48,7 @@ def handover(db, vexa: VexaClient) -> None:
             status="transcribed",
         )
         db.add(row)
-        _log(db, "handover", mid, segments=len(segs))
+        _log(db, tid, "handover", mid, segments=len(segs))
     db.commit()
 
 
@@ -62,7 +62,7 @@ def _dominant_lang(segs) -> str:
 
 
 # --------------------------------------------------------------------------- diarize
-def diarize_one(db, vexa: VexaClient, diar: DiarizerClient) -> bool:
+def diarize_one(db, vexa: VexaClient, diar: DiarizerClient, tid: int) -> bool:
     """Diarize the next transcribed meeting that has a recording. Returns True if it did work."""
     row = db.scalars(
         select(Meeting).where(Meeting.status == "transcribed", Meeting.diarized_at.is_(None)).limit(1)
@@ -74,7 +74,7 @@ def diarize_one(db, vexa: VexaClient, diar: DiarizerClient) -> bool:
     rec_id, mf_id = _audio_ref(m)
     if not rec_id:
         row.speaker_count, row.diarized_at, row.status = 0, _now(), "diarized"  # no recording
-        _log(db, "diarize", row.meeting_id, note="no recording")
+        _log(db, tid, "diarize", row.meeting_id, note="no recording")
         db.commit()
         return True
     try:
@@ -85,10 +85,10 @@ def diarize_one(db, vexa: VexaClient, diar: DiarizerClient) -> bool:
         row.diarized_transcript = _render(segs, name_map)
         row.speaker_count = int(result.get("num_speakers") or 0)
         row.diarized_at, row.status = _now(), "diarized"
-        _log(db, "diarize", row.meeting_id, speakers=row.speaker_count, named=len(name_map))
+        _log(db, tid, "diarize", row.meeting_id, speakers=row.speaker_count, named=len(name_map))
     except Exception as e:  # noqa: BLE001
         log.exception("diarize failed for %s", row.meeting_id)
-        _log(db, "error", row.meeting_id, step="diarize", err=str(e)[:300])
+        _log(db, tid, "error", row.meeting_id, step="diarize", err=str(e)[:300])
     db.commit()
     return True
 
@@ -135,7 +135,7 @@ def _render(segs, name_map) -> str:
 
 
 # --------------------------------------------------------------------------- summarize
-def summarize_one(db, llm: LLMClient) -> bool:
+def summarize_one(db, llm: LLMClient, tid: int) -> bool:
     row = db.scalars(select(Meeting).where(Meeting.status == "diarized").limit(1)).first()
     if not row:
         return False
@@ -161,7 +161,7 @@ def summarize_one(db, llm: LLMClient) -> bool:
     if len(summary.strip()) < 40 and any(partials):
         summary = "## Wichtige Punkte\n" + joined  # reasoning-robustness fallback
     row.summary, row.status = summary.strip(), "summarized"
-    _log(db, "summarize", row.meeting_id, chunks=len(chunks), chars=len(row.summary))
+    _log(db, tid, "summarize", row.meeting_id, chunks=len(chunks), chars=len(row.summary))
     db.commit()
     return True
 
@@ -187,7 +187,7 @@ def _chunk(units: list[str]) -> list[str]:
 
 
 # --------------------------------------------------------------------------- deliver
-def deliver_one(db, mailer: Mailer) -> bool:
+def deliver_one(db, mailer: Mailer, tid: int) -> bool:
     row = db.scalars(select(Meeting).where(Meeting.status == "summarized").limit(1)).first()
     if not row:
         return False
@@ -198,9 +198,9 @@ def deliver_one(db, mailer: Mailer) -> bool:
     try:
         mailer.send(recipients, f"Protokoll: {row.title}", html)
         row.delivered_at, row.status = _now(), "delivered"
-        _log(db, "deliver", row.meeting_id, to=recipients)
+        _log(db, tid, "deliver", row.meeting_id, to=recipients)
     except Exception as e:  # noqa: BLE001
-        _log(db, "error", row.meeting_id, step="deliver", err=str(e)[:300])
+        _log(db, tid, "error", row.meeting_id, step="deliver", err=str(e)[:300])
     db.commit()
     return True
 
@@ -227,7 +227,7 @@ def _md_html(md: str) -> str:
 
 
 # --------------------------------------------------------------------------- agent dispatch (phase 2)
-def agent_dispatch(db, vexa: VexaClient) -> None:
+def agent_dispatch(db, vexa: VexaClient, tid: int) -> None:
     """Calendar (Graph) -> plan upcoming meetings on Vexa with a configurable join lead.
     TODO(next): Graph calendarView for the configured account, dedupe, dispatch with lead time."""
     return

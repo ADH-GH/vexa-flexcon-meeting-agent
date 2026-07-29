@@ -129,3 +129,32 @@ would-be free subsidy into targeted marketing/sales. Revisit only if traction da
 
 **One number to confirm:** the server's **meeting-hour capacity** (sustained concurrency) — it swings the
 per-hour cost between €0.18 and €0.71. Give a realistic concurrent-meeting number and the tier prices lock.
+
+---
+
+## Fireflies — current prices (fetched 2026-07-29) & what it means for us
+
+| Plan | €/$ per seat/mo (annual · monthly) | Storage | Transcription | AI credits |
+|---|---|---|---|---|
+| Free | $0 | 400 min/team | unlimited | 20 |
+| Pro | $10 · $18 | 8,000 min/seat | unlimited | 20 |
+| Business (*most popular*) | $19 · $29 | unlimited | unlimited | 30 |
+| Enterprise | $39 (annual only) | unlimited | unlimited | 50 |
+
+**The key difference:** Fireflies gives **unlimited transcription** and limits **storage-minutes + AI
+credits** — their STT is cheap cloud at scale (near-zero marginal minute). **We are GPU-bound on-prem**,
+so we can't give away unlimited minutes cheaply. → We do **not** compete on "unlimited minutes"; we
+compete on **EU/on-prem sovereignty + German quality + authenticated join**, and price on that value.
+Positioning: our **Pro ~€19 ≈ their Business ($19)** — the DSGVO premium is the justification for EU
+buyers, not a discount war. **Enterprise ~€39** matches theirs but bundles the authenticated-join
+security flagship they can't match on strict tenants.
+
+## Make the forecast belastbar — GPU load test (before locking prices)
+The "~200 n8n instances then it degrades" ceiling is the *current* n8n load, **not** the new product's.
+The new bottleneck is the **GPU** (live STT keeping realtime + diarize throughput). Concrete test:
+- Spin up **N concurrent mock meetings** feeding audio → measure the STT **realtime-factor** + GPU
+  saturation; find the N where live STT can no longer keep realtime → that's max concurrency **C**.
+- Diarize is batch (~25× realtime measured on mtg 23) → not the binding constraint.
+- **Meeting-hours/month per server = C × business-hours × utilisation.** Plug measured **C** into the cost
+  model to lock the per-hour price.
+- Instrument via `event_log` (STT latency, queue depth) once Phase 3 runs real meetings.
