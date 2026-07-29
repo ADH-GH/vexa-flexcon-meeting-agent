@@ -1,0 +1,68 @@
+{% extends "_layout.html" %}
+{% block title %}Mail-Vorlagen · Meeting Agent{% endblock %}
+{% block body %}
+  <h2>Mail-Vorlagen</h2>
+  <p class="sub">Betreff und HTML-Text des Protokolls. Platzhalter:
+    <code>{{ "{{title}}" }}</code>, <code>{{ "{{date}}" }}</code>,
+    <code>{{ "{{speakers}}" }}</code>, <code>{{ "{{summary_html}}" }}</code>,
+    <code>{{ "{{action_items}}" }}</code>.</p>
+
+  <table>
+    <tr><th>Name</th><th>Betreff</th><th>Standard</th><th></th></tr>
+    {% for t in templates_list %}
+    <tr>
+      <td>{{ t.name }}</td>
+      <td class="muted">{{ t.subject_tpl }}</td>
+      <td>{% if t.is_default %}<span class="pill">Standard</span>{% endif %}</td>
+      <td><a href="/templates?edit={{ t.id }}">bearbeiten</a></td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4" class="muted">Noch keine Vorlage — unten eine anlegen (sonst greift das eingebaute Standard-Layout).</td></tr>
+    {% endfor %}
+  </table>
+
+  <div class="two" style="margin-top:24px">
+    <form class="stack" method="post" action="/templates" style="max-width:none">
+      <input type="hidden" name="tpl_id" value="{{ current.id if current else 0 }}">
+      <fieldset>
+        <legend>{{ "Vorlage bearbeiten" if current else "Neue Vorlage" }}</legend>
+        <label class="row"><span>Name</span>
+          <input type="text" name="name" value="{{ current.name if current else '' }}" required></label>
+        <label class="row"><span>Betreff</span>
+          <input type="text" name="subject_tpl"
+                 value="{{ current.subject_tpl if current else 'Protokoll: {{title}}' }}" required></label>
+        <label class="row"><span>Als Standard verwenden</span>
+          <input type="checkbox" name="is_default" {% if current and current.is_default %}checked{% endif %}
+                 style="width:auto;justify-self:start"></label>
+        <div style="margin-top:8px">
+          <div class="muted" style="font-size:13px;margin-bottom:4px">HTML-Text</div>
+          <textarea name="body_html_tpl">{{ current.body_html_tpl if current else
+'<p>Hallo,</p>
+<p>hier das automatisch erzeugte Protokoll zu <b>{{title}}</b> ({{date}}).</p>
+{{summary_html}}
+<p style="color:#888;font-size:12px">Teilnehmer: {{speakers}}</p>' }}</textarea>
+        </div>
+      </fieldset>
+      <div>
+        <button type="submit">Speichern</button>
+        {% if current %}<a class="btn ghost" href="/templates">Abbrechen</a>{% endif %}
+      </div>
+    </form>
+
+    <div>
+      <div class="muted" style="font-size:13px;margin-bottom:6px">
+        Vorschau (Beispieldaten){% if not current %} — eingebautes Standard-Layout{% endif %}
+      </div>
+      <div class="prev">
+        <div style="border-bottom:1px solid var(--line);padding-bottom:8px;margin-bottom:12px">
+          <span class="muted" style="font-size:12px">Betreff</span><br>
+          <b>{{ preview.subject }}</b>
+        </div>
+        {{ preview.html | safe }}
+      </div>
+      <p class="muted" style="font-size:12px;margin-top:8px">
+        Diese Vorschau nutzt denselben Renderer wie der echte Versand.
+      </p>
+    </div>
+  </div>
+{% endblock %}

@@ -1,0 +1,47 @@
+{% extends "_layout.html" %}
+{% block title %}Agent Connector · Meeting Agent{% endblock %}
+{% block body %}
+  <h2>Agent Connector</h2>
+  <p class="sub">Andere Agenten und Systeme an den Meeting Agent anbinden — Meetings abfragen,
+     Protokolle abholen, einen Bot sofort schicken.</p>
+
+  {% if new_key %}
+  <div class="ok">
+    <b>Neuer API-Key — jetzt kopieren, er wird nicht wieder angezeigt:</b>
+    <div class="key" style="margin-top:6px">{{ new_key }}</div>
+  </div>
+  {% endif %}
+
+  <h2 style="font-size:16px">Endpunkte</h2>
+  <table>
+    <tr><th>Methode</th><th>Pfad</th><th>Zweck</th></tr>
+    <tr><td><span class="pill">GET</span></td><td class="key">/agent/meetings</td><td>Meetings mit Status</td></tr>
+    <tr><td><span class="pill">GET</span></td><td class="key">/agent/meetings/{id}/protocol</td><td>Protokoll abholen</td></tr>
+    <tr><td><span class="pill">POST</span></td><td class="key">/agent/dispatch?join_url=…</td><td>Bot sofort schicken</td></tr>
+  </table>
+  <p class="muted" style="font-size:13px">Authentifizierung: Header <code class="key">X-API-Key: fxma_…</code></p>
+
+  <h2 style="font-size:16px;margin-top:26px">API-Keys</h2>
+  <table>
+    <tr><th>Name</th><th>Scopes</th><th>Zuletzt genutzt</th><th></th></tr>
+    {% for k in keys %}
+    <tr>
+      <td>{{ k.name }}</td>
+      <td class="muted">{{ k.scopes | join(", ") }}</td>
+      <td class="muted">{{ k.last_used.strftime("%d.%m. %H:%M") if k.last_used else "nie" }}</td>
+      <td>
+        <form method="post" action="/connector/keys/{{ k.id }}/revoke" style="display:inline">
+          <button class="ghost" type="submit">widerrufen</button>
+        </form>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4" class="muted">Noch kein Key angelegt.</td></tr>
+    {% endfor %}
+  </table>
+
+  <form method="post" action="/connector/keys" style="margin-top:14px;display:flex;gap:10px;max-width:460px">
+    <input type="text" name="name" placeholder="Name, z. B. „Flexcon Agents“">
+    <button type="submit" style="white-space:nowrap">Key erstellen</button>
+  </form>
+{% endblock %}

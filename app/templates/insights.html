@@ -1,0 +1,54 @@
+{% extends "_layout.html" %}
+{% block title %}Insights &amp; Reports · Meeting Agent{% endblock %}
+{% block body %}
+  <h2>Insights &amp; Reports</h2>
+  <p class="sub">Letzte {{ days }} Tage · Nutzung, Qualität und Zustellung auf einen Blick.</p>
+
+  <div class="cards">
+    <div class="card"><b>{{ stats.get('meetings', 0) }}</b><span>Meetings</span></div>
+    <div class="card"><b>{{ stats.get('delivered', 0) }}</b><span>Protokolle zugestellt</span></div>
+    <div class="card"><b>{{ stats.get('minutes', 0) }}</b><span>Meeting-Minuten</span></div>
+    <div class="card"><b>{{ stats.get('speakers_avg', 0) }}</b><span>Ø Sprecher / Meeting</span></div>
+  </div>
+
+  <h2 style="font-size:16px">Zustellungen pro Tag</h2>
+  {% set peak = (by_day | map(attribute=1) | max) if by_day else 1 %}
+  <table>
+    {% for day, n in by_day %}
+    <tr>
+      <td style="width:110px">{{ day }}</td>
+      <td>
+        <span style="display:inline-block;height:11px;border-radius:3px;background:#2563eb;
+              width:{{ (n / peak * 100) | round }}%;min-width:3px;vertical-align:middle"></span>
+        <span class="muted" style="margin-left:8px">{{ n }}</span>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td class="muted">Noch keine Zustellungen im Zeitraum.</td></tr>
+    {% endfor %}
+  </table>
+
+  <h2 style="font-size:16px;margin-top:26px">Längste Meetings</h2>
+  <table>
+    <tr><th>Titel</th><th>Sprecher</th><th>Minuten</th></tr>
+    {% for title, speakers, minutes in top %}
+    <tr><td>{{ title }}</td><td>{{ speakers if speakers is not none else "–" }}</td><td>{{ minutes }}</td></tr>
+    {% else %}
+    <tr><td colspan="3" class="muted">Noch keine Daten.</td></tr>
+    {% endfor %}
+  </table>
+
+  {% if errors %}
+  <h2 style="font-size:16px;margin-top:26px">Letzte Fehler</h2>
+  <table>
+    <tr><th>Zeit</th><th>Meeting</th><th>Details</th></tr>
+    {% for e in errors %}
+    <tr>
+      <td class="muted">{{ e.ts.strftime("%d.%m. %H:%M") }}</td>
+      <td class="muted">{{ e.meeting_id or "–" }}</td>
+      <td class="muted">{{ e.detail.get("step", "") }} {{ e.detail.get("err", "") }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+{% endblock %}

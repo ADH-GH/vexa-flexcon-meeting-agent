@@ -1,62 +1,28 @@
-<!doctype html>
-<html lang="de">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Vexa Flexcon Meeting Agent</title>
-  <style>
-    :root { color-scheme: light dark; }
-    body { font: 15px/1.5 system-ui, sans-serif; margin: 0; }
-    header { padding: 14px 22px; border-bottom: 1px solid #8883; display: flex; gap: 16px; align-items: baseline; }
-    header h1 { font-size: 17px; margin: 0; }
-    nav a { margin-right: 14px; color: inherit; text-decoration: none; opacity: .7; }
-    main { padding: 22px; max-width: 1100px; }
-    .cards { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 20px; }
-    .card { border: 1px solid #8883; border-radius: 10px; padding: 14px 18px; min-width: 130px; }
-    .card b { font-size: 26px; display: block; }
-    table { border-collapse: collapse; width: 100%; }
-    th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid #8882; }
-    .pill { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #8883; }
-    .muted { opacity: .6; }
-  </style>
-</head>
-<body>
-  <header>
-    <h1>🎙️ Vexa · Flexcon Meeting Agent</h1>
-    <nav>
-      <a href="/">Meetings</a><a href="#">Meeting Agent</a><a href="#">LLM</a>
-      <a href="#">Mail &amp; Templates</a><a href="#">Insights &amp; Reports</a>
-      <a href="#">Agent Connector</a><a href="#">API Keys</a><a href="/health">Health</a>
-    </nav>
-    <span style="margin-left:auto;opacity:.6;font-size:13px">
-      {{ principal.email if principal else "" }} · <a href="/auth/logout" style="color:inherit">Logout</a>
-    </span>
-  </header>
-  <main>
-    <div class="cards">
-      <div class="card"><b>{{ tenants }}</b><span class="muted">Mandanten</span></div>
-      <div class="card"><b>{{ users }}</b><span class="muted">Nutzer</span></div>
-      <div class="card"><b>{{ overview | sum(attribute='total') }}</b><span class="muted">Meetings</span></div>
-    </div>
+{% extends "_layout.html" %}
+{% block title %}Meetings · Meeting Agent{% endblock %}
+{% block body %}
+  <h2>Meetings</h2>
+  <p class="sub">Läuft automatisch: Kalender → Beitritt → Transkript → Protokoll → Zustellung.</p>
 
-    <h2>Mandanten</h2>
-    <table>
-      <tr><th>Mandant</th><th>Tier</th><th>Join</th><th>Meetings (nach Status)</th></tr>
-      {% for o in overview %}
-      <tr>
-        <td>{{ o.tenant.name or o.tenant.entra_tenant_id }}</td>
-        <td><span class="pill">{{ o.tenant.tier }}</span></td>
-        <td class="muted">{{ o.tenant.join_mode }}</td>
-        <td>{% for s, n in o.by_status.items() %}<span class="pill">{{ s }}: {{ n }}</span> {% else %}<span class="muted">–</span>{% endfor %}</td>
-      </tr>
-      {% else %}
-      <tr><td colspan="4" class="muted">Noch keine Mandanten.</td></tr>
-      {% endfor %}
-    </table>
-    <p class="muted" style="margin-top:24px">
-      Settings-Sektionen (Meeting-Agent · LLM · Mail-Templates · Insights &amp; Reports ·
-      Agent Connector · API Keys) folgen in Phase 3–4.
-    </p>
-  </main>
-</body>
-</html>
+  <div class="cards">
+    {% for status, n in by_status.items() %}
+      <div class="card"><b>{{ n }}</b><span>{{ status }}</span></div>
+    {% else %}
+      <div class="card"><b>0</b><span>noch keine</span></div>
+    {% endfor %}
+  </div>
+
+  <table>
+    <tr><th>Titel</th><th>Status</th><th>Sprecher</th><th>Zugestellt</th></tr>
+    {% for m in meetings %}
+    <tr>
+      <td>{{ m.title }}</td>
+      <td><span class="pill">{{ m.status }}</span></td>
+      <td>{{ m.speaker_count if m.speaker_count is not none else "–" }}</td>
+      <td class="muted">{{ m.delivered_at.strftime("%d.%m. %H:%M") if m.delivered_at else "–" }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4" class="muted">Noch keine Meetings — sobald ein Termin ansteht, geht der Agent von selbst hinein.</td></tr>
+    {% endfor %}
+  </table>
+{% endblock %}

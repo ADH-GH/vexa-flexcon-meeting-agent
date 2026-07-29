@@ -12,10 +12,11 @@ import urllib.parse
 
 from sqlalchemy import select
 
+from .. import mailrender, settings_store
 from ..auth import user_access_token
 from ..clients import DiarizerClient, LLMClient, Mailer, VexaClient, graph_calendar_view
 from ..config import settings
-from ..models import EventLog, Meeting, Tenant, User
+from ..models import EventLog, MailTemplate, Meeting, Tenant, User
 
 log = logging.getLogger("pipeline")
 
@@ -62,6 +63,7 @@ def handover(db, vexa: VexaClient, tid: int) -> None:
             p.started_at = p.started_at or (m.get("start_time") or "")
             p.ended_at = m.get("end_time") or ""
             p.language, p.segment_count, p.status = _dominant_lang(segs), len(segs), "transcribed"
+            p.billable_minutes = _minutes(p.started_at, p.ended_at)
             _log(db, tid, "handover", mid, segments=len(segs), planned=True)
         elif tenant is not None and tenant.ingest_all and mid not in have:
             segs = vexa.transcript(mid).get("segments", [])
@@ -69,9 +71,20 @@ def handover(db, vexa: VexaClient, tid: int) -> None:
                 tenant_id=tid, meeting_id=mid, native_id=nid,
                 title=(m.get("data") or {}).get("title") or m.get("constructed_meeting_url") or "Meeting",
                 started_at=m.get("start_time") or "", ended_at=m.get("end_time") or "",
-                language=_dominant_lang(segs), segment_count=len(segs), status="transcribed"))
+                language=_dominant_lang(segs), segment_count=len(segs), status="transcribed",
+                billable_minutes=_minutes(m.get("start_time") or "", m.get("end_time") or "")))
             _log(db, tid, "handover", mid, segments=len(segs))
     db.commit()
+
+
+def _minutes(start: str, end: str) -> int:
+    """Billable meeting minutes from Vexa's start/end stamps (feeds Insights + metered billing)."""
+    try:
+        a = dt.datetime.fromisoformat((start or "").replace("Z", "+00:00"))
+        b = dt.datetime.fromisoformat((end or "").replace("Z", "+00:00"))
+        return max(0, round((b - a).total_seconds() / 60))
+    except (ValueError, TypeError):
+        return 0
 
 
 def _dominant_lang(segs) -> str:
@@ -156,6 +169,28 @@ def _render(segs, name_map) -> str:
                      f"{(x.get('text') or '').strip()}" for x in segs)
 
 
+def _map_prompt(lang: str, idx: int, total: int) -> str:
+    if lang == "en":
+        return (f"You are given EXCERPT {idx} of {total} of a meeting transcript. Summarise ONLY this "
+                "excerpt's substantive points as bullets: topics, decisions, action items, figures. "
+                "Short, bullets only, no preamble.")
+    return (f"Du bekommst AUSSCHNITT {idx} von {total} eines Meeting-Transkripts. Fasse NUR die "
+            "inhaltlich wichtigen Punkte stichpunktartig auf Deutsch zusammen: Themen, Entscheidungen, "
+            "Action Items, Zahlen. Kurz, nur Stichpunkte, keine Einleitung.")
+
+
+def _reduce_prompt(lang: str) -> str:
+    if lang == "en":
+        return ("You are a precise minutes assistant. From the partial summaries build ONE consolidated "
+                "protocol in English, EXACTLY in this format, no preamble:\n\n## Summary\n(3-6 sentences)"
+                "\n\n## Key points\n- ...\n\n## Action items\n- [Owner, if identifiable] Task\n\n"
+                "Carry over ALL action items, omit none.")
+    return ("Du bist ein praeziser Protokoll-Assistent. Aus den Teil-Zusammenfassungen erstelle EIN "
+            "konsolidiertes Protokoll auf Deutsch, GENAU in diesem Format, ohne Einleitung:\n\n"
+            "## Zusammenfassung\n(3-6 Saetze)\n\n## Wichtige Punkte\n- ...\n\n## Action Items\n"
+            "- [Verantwortlicher, falls erkennbar] Aufgabe\n\nUebernimm ALLE Action Items, lasse keine weg.")
+
+
 # --------------------------------------------------------------------------- summarize
 def summarize_one(db, llm: LLMClient, tid: int) -> bool:
     row = db.scalars(select(Meeting).where(Meeting.status == "diarized").limit(1)).first()
@@ -166,37 +201,38 @@ def summarize_one(db, llm: LLMClient, tid: int) -> bool:
         row.status = "summarized"
         db.commit()
         return True
-    chunks = _chunk(src.split("\n"))
+    cfg = settings_store.get_all(db, tid)
+    chunks = _chunk(src.split("\n"), int(cfg.get("llm_chunk") or CHUNK),
+                    int(cfg.get("llm_overlap") or OVERLAP))
+    temp = float(cfg.get("llm_temperature") or 0.2)
+    model = cfg.get("llm_model") or None
+    lang = (cfg.get("summary_language") or "de").lower()
     partials = []
     for i, text in enumerate(chunks, 1):
-        sys = (f"Du bekommst AUSSCHNITT {i} von {len(chunks)} eines Meeting-Transkripts (Flexcon IT). "
-               "Fasse NUR die inhaltlich wichtigen Punkte stichpunktartig auf Deutsch zusammen: Themen, "
-               "Entscheidungen, Action Items, Zahlen. Kurz, nur Stichpunkte.")
-        partials.append(llm.chat(sys, text, max_tokens=4000))
-    joined = "\n\n".join(f"Ausschnitt {i}:\n{p}" for i, p in enumerate(partials, 1) if p)
-    reduce_sys = (
-        "Du bist ein praeziser Protokoll-Assistent fuer Flexcon IT. Aus den Teil-Zusammenfassungen "
-        "erstelle EIN konsolidiertes Protokoll auf Deutsch, GENAU in diesem Format, ohne Einleitung:\n\n"
-        "## Zusammenfassung\n(3-6 Saetze)\n\n## Wichtige Punkte\n- ...\n\n## Action Items\n"
-        "- [Verantwortlicher, falls erkennbar] Aufgabe\n\nUebernimm ALLE Action Items, lasse keine weg.")
-    summary = llm.chat(reduce_sys, joined, max_tokens=8000)
+        partials.append(llm.chat(_map_prompt(lang, i, len(chunks)), text,
+                                 max_tokens=4000, temperature=temp, model=model))
+    label = "Ausschnitt" if lang == "de" else "Excerpt"
+    joined = "\n\n".join(f"{label} {i}:\n{p}" for i, p in enumerate(partials, 1) if p)
+    summary = llm.chat(_reduce_prompt(lang), joined, max_tokens=8000, temperature=temp, model=model)
     if len(summary.strip()) < 40 and any(partials):
-        summary = "## Wichtige Punkte\n" + joined  # reasoning-robustness fallback
+        # reasoning-robustness: a reasoning model can burn its whole budget and return empty content —
+        # fall back to the per-chunk summaries rather than losing the meeting entirely.
+        summary = ("## Wichtige Punkte\n" if lang == "de" else "## Key points\n") + joined
     row.summary, row.status = summary.strip(), "summarized"
     _log(db, tid, "summarize", row.meeting_id, chunks=len(chunks), chars=len(row.summary))
     db.commit()
     return True
 
 
-def _chunk(units: list[str]) -> list[str]:
+def _chunk(units: list[str], chunk: int = CHUNK, overlap: int = OVERLAP) -> list[str]:
     units = [u.strip() for u in units if u.strip()]
     pieces, cur, clen = [], [], 0
     for u in units:
-        if clen and clen + len(u) > CHUNK:
+        if clen and clen + len(u) > chunk:
             pieces.append(" ".join(cur))
             tail, tl = [], 0
             for x in reversed(cur):
-                if tl >= OVERLAP:
+                if tl >= overlap:
                     break
                 tail.insert(0, x)
                 tl += len(x) + 1
@@ -213,24 +249,51 @@ def deliver_one(db, mailer: Mailer, tid: int) -> bool:
     row = db.scalars(select(Meeting).where(Meeting.status == "summarized").limit(1)).first()
     if not row:
         return False
-    # Deliver to the owning user (the person whose calendar we watched); FROM the Flexcon sender.
-    # (Full attendee resolution + external owner-approval is a later step; templates from mail_templates.)
-    recipients = []
-    if row.user_id:
-        u = db.get(User, row.user_id)
-        if u and u.email:
-            recipients = [u.email]
-    if not recipients:
-        recipients = [settings.mail_from]
-    html = f"<h3>{row.title}</h3>{_md_html(row.summary)}"
+    cfg = settings_store.get_all(db, tid)
+    if not cfg.get("mail_enabled"):
+        row.status = "delivered"          # delivery switched off: complete without mailing
+        db.commit()
+        return True
+
+    recipients = _recipients(db, row, cfg.get("recipient_policy") or "owner")
+    tpl = _mail_template(db, cfg.get("mail_template"))
+    subject, html = mailrender.render(tpl, mailrender.meeting_data(row, _md_html(row.summary)))
     try:
-        mailer.send(recipients, f"Protokoll: {row.title}", html)
+        mailer.send(recipients, subject, html)
         row.delivered_at, row.status = _now(), "delivered"
-        _log(db, tid, "deliver", row.meeting_id, to=recipients)
+        _log(db, tid, "deliver", row.meeting_id, to=recipients,
+             template=getattr(tpl, "name", "built-in"))
     except Exception as e:  # noqa: BLE001
         _log(db, tid, "error", row.meeting_id, step="deliver", err=str(e)[:300])
     db.commit()
     return True
+
+
+def _recipients(db, row, policy: str) -> list[str]:
+    """Who gets the protocol.
+    `owner`    → the user whose calendar we watched (default).
+    `internal` → the owner plus the meeting's INTERNAL attendees (captured at dispatch time).
+    External attendees are NEVER auto-mailed — that needs the organiser's approval (roadmap)."""
+    out = []
+    if row.user_id:
+        u = db.get(User, row.user_id)
+        if u and u.email:
+            out.append(u.email)
+    if policy == "internal":
+        for addr in (row.participants or {}).get("internal", []):
+            if addr not in out:
+                out.append(addr)
+    return out or [settings.mail_from]
+
+
+def _mail_template(db, name: str | None):
+    """The tenant's selected template: by name → else the one flagged default → else built-in."""
+    rows = db.scalars(select(MailTemplate)).all()
+    if name:
+        hit = next((t for t in rows if t.name == name), None)
+        if hit:
+            return hit
+    return next((t for t in rows if t.is_default), None)
 
 
 def _md_html(md: str) -> str:
@@ -254,16 +317,45 @@ def _md_html(md: str) -> str:
     return "".join(out)
 
 
+def _within_lead(starts_at: str, now: dt.datetime, lead_s: int) -> bool:
+    """True once the meeting starts within `lead_s` (already-running meetings included)."""
+    if not starts_at:
+        return True                       # no start time → don't hold it back
+    try:
+        s = dt.datetime.fromisoformat(starts_at[:19] + "+00:00")
+    except ValueError:
+        return True
+    return (s - now).total_seconds() <= lead_s
+
+
+def _attendees(ev: dict, user_email: str) -> dict:
+    """Split the event's attendees into internal/external by the user's own mail domain, so delivery
+    can honour the recipient policy. Externals are stored but NEVER auto-mailed."""
+    domain = ("@" + user_email.split("@")[-1]).lower() if "@" in (user_email or "") else ""
+    internal, external = [], []
+    for a in ev.get("attendees") or []:
+        addr = (((a.get("emailAddress") or {}).get("address")) or "").lower()
+        if not addr or addr == (user_email or "").lower():
+            continue
+        (internal if domain and addr.endswith(domain) else external).append(addr)
+    return {"internal": internal, "external": external}
+
+
 # --------------------------------------------------------------------------- agent dispatch (per user)
 def agent_dispatch(db, vexa: VexaClient, tid: int) -> None:
     """Per user: read the calendar with the user's delegated token, plan any upcoming Teams meeting on
     Vexa (guest join; Vexa auto-joins at its own lead), and create an OWNED 'planned' row. Dedupe by
     native id. Vexa native id ↔ our planned row is what handover pairs on."""
+    cfg = settings_store.get_all(db, tid)
+    if not cfg.get("auto_join", True):
+        return
     users = db.scalars(select(User).where(User.tenant_id == tid, User.active.is_(True))).all()
     if not users:
         return
     now = dt.datetime.now(dt.timezone.utc)
-    start, end = now.isoformat(), (now + dt.timedelta(hours=DISPATCH_WINDOW_H)).isoformat()
+    window = int(cfg.get("dispatch_window_h") or DISPATCH_WINDOW_H)
+    lead_s = int(cfg.get("join_lead_s") or 120)
+    start, end = now.isoformat(), (now + dt.timedelta(hours=window)).isoformat()
     known = {r for r in db.scalars(select(Meeting.native_id)).all() if r}
     for user in users:
         at = user_access_token(db, user)
@@ -275,17 +367,23 @@ def agent_dispatch(db, vexa: VexaClient, tid: int) -> None:
             _log(db, tid, "error", "", step="calendar", err=str(e)[:200], user=user.id)
             continue
         for ev in events:
-            nid = token(((ev.get("onlineMeeting") or {}).get("joinUrl")) or "")
+            join_url = (ev.get("onlineMeeting") or {}).get("joinUrl") or ""
+            nid = token(join_url)
             if not nid or nid in known:
                 continue
+            starts_at = (ev.get("start") or {}).get("dateTime") or ""
+            # Only dispatch once the meeting is within the configured join lead — the calendar window
+            # is the search horizon, the lead decides WHEN the bot is sent.
+            if not _within_lead(starts_at, now, lead_s):
+                continue
             try:
-                vexa.dispatch_bot((ev.get("onlineMeeting") or {}).get("joinUrl"))
+                vexa.dispatch_bot(join_url)
             except Exception as e:  # noqa: BLE001
                 _log(db, tid, "error", nid, step="dispatch", err=str(e)[:200])
                 continue
             db.add(Meeting(tenant_id=tid, user_id=user.id, native_id=nid, meeting_id=nid,
-                           title=ev.get("subject") or "Meeting",
-                           started_at=((ev.get("start") or {}).get("dateTime")) or "", status="planned"))
+                           title=ev.get("subject") or "Meeting", started_at=starts_at,
+                           participants=_attendees(ev, user.email), status="planned"))
             known.add(nid)
             _log(db, tid, "dispatch", nid, user=user.id)
     db.commit()

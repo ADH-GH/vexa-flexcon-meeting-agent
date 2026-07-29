@@ -9,10 +9,13 @@ Reuses the standalone [`diarizer`](https://github.com/ADH-GH/diarizer) service (
 pyannote community-1). Built by **Alf-David Heermann** ([@ADH-GH](https://github.com/ADH-GH), Flexcon IT)
 and **Claude** (Anthropic, Opus 4.8).
 
-> **Status: Phase 3 — per-user auto-pipeline.** After "Sign in with Microsoft", the agent reads each
-> user's calendar (their token), plans Teams meetings on Vexa (guest join), diarises, summarises, and
-> delivers the German protocol to the owner from the Flexcon sender — hands-free. Join tiers + dashboard
-> settings + Stripe billing are next (see docs/).
+> **Status: Phase 4 — dashboard & settings.** After "Sign in with Microsoft" everything runs hands-free
+> (calendar → join → diarise → summarise → deliver), and the dashboard now configures it: meeting agent,
+> LLM, mail templates with live preview, **Insights & Reports**, **Agent Connector** + API keys, and a
+> DSGVO retention job. Join tiers + Stripe billing are next (see `docs/`).
+>
+> Design rule: **every switch in the UI does something, or it isn't there.** A settings key with no
+> consumer in the pipeline is treated as a bug.
 
 ## What it does (5 pipeline modules)
 
@@ -21,8 +24,9 @@ and **Claude** (Anthropic, Opus 4.8).
 | **handover** | polls Vexa `status=completed` → upserts meetings (dedupe/audit) |
 | **diarize** | recording → `diarizer /diarize_upload` → correlate `SPEAKER_xx` to **real names** via Vexa's live transcript → store |
 | **summarize** | diarized transcript → chunked map-reduce over an **OpenAI-compatible LLM** → German protocol |
-| **deliver** | resolve recipients (internal direct / external owner-approval) → render **template** → send via **SMTP or Graph** |
-| **agent-dispatch** | calendar (Graph) → plan bots on Vexa with a configurable **join lead** *(phase 2)* |
+| **deliver** | pick recipients per policy (owner / internal attendees) → render the tenant's **mail template** → send via **SMTP or Graph** |
+| **agent-dispatch** | per-user calendar (Graph) → plan bots on Vexa once the meeting is within the configured **join lead** |
+| **retention** | past `retention_days`, erase transcript + summary content (row kept as audit/billing record) |
 
 State machine: `transcribed → diarized → summarized → delivered`. The diarize step is single-flight (one
 GPU job per tick).
@@ -47,11 +51,16 @@ curl -s localhost:8080/health | jq
 
 ```
 app/
-  config.py      env + settings          models.py    Postgres schema (meetings, settings, templates, api_keys, event_log)
-  db.py          engine/session          clients/     Vexa · Diarizer · LLM · Mailer (SMTP/Graph)
-  pipeline/      handover·diarize·summarize·deliver·agent_dispatch (pipeline logic)
-  scheduler.py   APScheduler loops       web.py       health · Agent-Connect API · dashboard
-  main.py        app factory             templates/   server-rendered dashboard
+  config.py         env + secrets            models.py        Postgres schema (tenants, users, meetings,
+  db.py             engine · RLS ·                            settings, mail_templates, api_keys, event_log)
+                    tenant_scope()           clients/         Vexa · Diarizer · LLM · Mailer (SMTP/Graph)
+  auth.py           Entra OAuth (PKCE) ·     pipeline/        handover · diarize · summarize · deliver ·
+                    per-user tokens                           agent_dispatch
+  crypto.py         token encryption         scheduler.py     post-call · dispatch · refresh · retention
+  settings_store.py per-tenant settings,     web.py           health · Agent-Connect API · dashboard
+                    zero-config defaults     templates/       server-rendered pages
+  apikeys.py        Agent-Connect keys       mailrender.py    ONE renderer for preview *and* delivery
+  main.py           app factory
 ```
 
 ## Build phases
@@ -59,8 +68,8 @@ app/
 1. ✅ **Multi-tenancy** — FastAPI · Postgres 17.5 · per-tenant scheduler · tenants/users · tenant_id + **RLS** · encrypted token store.
 2. ✅ **Entra onboarding** — Sign in with Microsoft (auth-code + PKCE) · auto-provision tenant + user · refresh-token worker · local admin fallback.
 3. ✅ **Per-user auto-pipeline** — per-user calendar watch → plan on Vexa (guest join) → diarise → summarise → deliver to the owner (Flexcon sender).
-4. Dashboard — settings (agent lead · LLM · mail templates · **Insights & Reports** · **Agent Connector** · API keys).
-5. **Join tiers** (guest default + authenticated Enterprise) + **Stripe** billing (metered usage) + DSGVO (retention/erasure).
+4. ✅ **Dashboard & settings** — agent · LLM · mail templates (one renderer for preview *and* delivery) · **Insights & Reports** · **Agent Connector** + API keys · DSGVO retention job.
+5. **Join tiers** (guest default + authenticated Enterprise) + **Stripe** billing (metered usage) + marketplace provisioning.
 6. Cutover — run in parallel with the current setup, compare, then switch over.
 
 Design: `docs/MARKETPLACE-DESIGN.md` (multi-tenant, zero-onboarding, tiered join) · architecture note in the flexcon-workbench.

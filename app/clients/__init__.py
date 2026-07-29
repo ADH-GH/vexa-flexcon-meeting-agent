@@ -63,8 +63,9 @@ class LLMClient:
         self.h = {"Authorization": f"Bearer {settings.llm_api_key}"}
         self.model = settings.llm_model
 
-    def chat(self, system: str, user: str, max_tokens: int = 4000, temperature: float = 0.2) -> str:
-        body = {"model": self.model, "temperature": temperature, "max_tokens": max_tokens,
+    def chat(self, system: str, user: str, max_tokens: int = 4000, temperature: float = 0.2,
+             model: str | None = None) -> str:
+        body = {"model": model or self.model, "temperature": temperature, "max_tokens": max_tokens,
                 "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
         r = httpx.post(self.url, json=body, headers=self.h, timeout=180)
         r.raise_for_status()
@@ -109,7 +110,7 @@ def graph_calendar_view(access_token: str, start_iso: str, end_iso: str) -> list
     r = httpx.get(
         "https://graph.microsoft.com/v1.0/me/calendarView",
         params={"startDateTime": start_iso, "endDateTime": end_iso,
-                "$select": "subject,onlineMeeting,start,end,organizer", "$top": "100"},
+                "$select": "subject,onlineMeeting,start,end,organizer,attendees", "$top": "100"},
         headers={"Authorization": f"Bearer {access_token}", "Prefer": 'outlook.timezone="UTC"'},
         timeout=30)
     r.raise_for_status()

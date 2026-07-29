@@ -119,5 +119,7 @@ class EventLog(Base):
     detail: Mapped[dict] = mapped_column(JSONB, default=dict)
 
 
-# Data tables that get Postgres RLS (tenant_id isolation). Control-plane tables are excluded.
-RLS_TABLES = ("meetings", "settings", "mail_templates", "api_keys", "event_log")
+# Data tables that get Postgres RLS (tenant_id isolation).
+# Control-plane tables are excluded: tenants/users (identity) and api_keys — a key must be resolvable
+# BEFORE the tenant is known (the hash IS the credential), so it cannot sit behind a tenant policy.
+RLS_TABLES = ("meetings", "settings", "mail_templates", "event_log")
