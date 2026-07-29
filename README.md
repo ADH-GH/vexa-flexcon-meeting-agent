@@ -60,4 +60,4 @@ app/
 4. **agent-dispatch** + **Agent-Connect** API (Flexcon Agents).
 5. Cutover — run in parallel with the current setup, compare, then switch over.
 
-Design notes: `DESIGN.md` in the flexcon-workbench (`tools/vexa/vexa-flexcon-enhancements/`).
+Design: `docs/MARKETPLACE-DESIGN.md` (multi-tenant, zero-onboarding, tiered join) · architecture note in the flexcon-workbench.
