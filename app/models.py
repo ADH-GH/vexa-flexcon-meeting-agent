@@ -23,10 +23,19 @@ class Tenant(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     entra_tenant_id: Mapped[str] = mapped_column(String, unique=True, index=True)
     name: Mapped[str] = mapped_column(String, default="")
-    tier: Mapped[str] = mapped_column(String, default="pro")          # pro | enterprise
+    tier: Mapped[str] = mapped_column(String, default="trial")        # trial | pro | enterprise
     join_mode: Mapped[str] = mapped_column(String, default="guest")   # guest | auth
     retention_days: Mapped[int] = mapped_column(Integer, default=90)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # --- billing (Stripe is the source of truth; set by webhook) ---
+    stripe_customer_id: Mapped[str] = mapped_column(String, default="", index=True)
+    stripe_subscription_id: Mapped[str] = mapped_column(String, default="")
+    stripe_usage_item_id: Mapped[str] = mapped_column(String, default="")  # metered overage line
+    included_minutes: Mapped[int] = mapped_column(Integer, default=1200)   # per period (20 h)
+    trial_ends_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Enterprise (authenticated join) needs its own Vexa deployment holding the tenant's bot session;
+    # empty = use the shared guest pool. An auth tenant without this must NOT silently join as a guest.
+    vexa_endpoint: Mapped[str] = mapped_column(String, default="")
     # legacy/bootstrap tenant: ingest ALL completed Vexa meetings (calendar-invite flow) rather than
     # only the ones this app dispatched per user. Onboarded tenants keep this False.
     ingest_all: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -70,6 +79,8 @@ class Meeting(Base):
     diarized_transcript: Mapped[str] = mapped_column(Text, default="")
     speaker_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     billable_minutes: Mapped[int] = mapped_column(Integer, default=0)   # for Stripe metered usage
+    # stamped once the minutes have been reported to Stripe, so a retry can never double-bill
+    usage_reported_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     diarized_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     delivered_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)

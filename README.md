@@ -9,13 +9,14 @@ Reuses the standalone [`diarizer`](https://github.com/ADH-GH/diarizer) service (
 pyannote community-1). Built by **Alf-David Heermann** ([@ADH-GH](https://github.com/ADH-GH), Flexcon IT)
 and **Claude** (Anthropic, Opus 4.8).
 
-> **Status: Phase 4 — dashboard & settings.** After "Sign in with Microsoft" everything runs hands-free
-> (calendar → join → diarise → summarise → deliver), and the dashboard now configures it: meeting agent,
-> LLM, mail templates with live preview, **Insights & Reports**, **Agent Connector** + API keys, and a
-> DSGVO retention job. Join tiers + Stripe billing are next (see `docs/`).
+> **Status: Phase 5 — join tiers & billing.** After "Sign in with Microsoft" everything runs hands-free
+> (calendar → join → diarise → summarise → deliver), configured from the dashboard, billed through
+> Stripe by meeting-minutes, with **guest join** as the zero-config default and **authenticated join**
+> as the Enterprise tier for strict Microsoft tenants.
 >
-> Design rule: **every switch in the UI does something, or it isn't there.** A settings key with no
-> consumer in the pipeline is treated as a bug.
+> Design rules: **every switch in the UI does something, or it isn't there** (a settings key with no
+> consumer is a bug) — and **an Enterprise tenant never silently falls back to a guest join**, because
+> that is the exact capability the tier was bought for.
 
 ## What it does (5 pipeline modules)
 
@@ -69,7 +70,7 @@ app/
 2. ✅ **Entra onboarding** — Sign in with Microsoft (auth-code + PKCE) · auto-provision tenant + user · refresh-token worker · local admin fallback.
 3. ✅ **Per-user auto-pipeline** — per-user calendar watch → plan on Vexa (guest join) → diarise → summarise → deliver to the owner (Flexcon sender).
 4. ✅ **Dashboard & settings** — agent · LLM · mail templates (one renderer for preview *and* delivery) · **Insights & Reports** · **Agent Connector** + API keys · DSGVO retention job.
-5. **Join tiers** (guest default + authenticated Enterprise) + **Stripe** billing (metered usage) + marketplace provisioning.
+5. ✅ **Join tiers & billing** — guest (shared pool) vs authenticated Enterprise (own Vexa deployment, no silent fallback) · Stripe webhook sets entitlements · nightly metered usage · marketplace provisioning · Plan &amp; usage page with the Enterprise upsell signal.
 6. Cutover — run in parallel with the current setup, compare, then switch over.
 
 Design: `docs/MARKETPLACE-DESIGN.md` (multi-tenant, zero-onboarding, tiered join) · architecture note in the flexcon-workbench.

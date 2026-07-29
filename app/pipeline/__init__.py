@@ -49,6 +49,9 @@ def handover(db, vexa: VexaClient, tid: int) -> None:
     'planned' rows by native id; the bootstrap/legacy tenant (ingest_all) also ingests every completed
     meeting (the calendar-invite flow), for testing continuity against a live Vexa."""
     tenant = db.get(Tenant, tid)
+    vexa = tenant_vexa(tenant, vexa)
+    if vexa is None:
+        return
     planned = {p.native_id: p for p in
                db.scalars(select(Meeting).where(Meeting.status == "planned")).all()}
     have = {m for m in db.scalars(select(Meeting.meeting_id)).all() if m}
@@ -65,6 +68,11 @@ def handover(db, vexa: VexaClient, tid: int) -> None:
             p.language, p.segment_count, p.status = _dominant_lang(segs), len(segs), "transcribed"
             p.billable_minutes = _minutes(p.started_at, p.ended_at)
             _log(db, tid, "handover", mid, segments=len(segs), planned=True)
+            # A dispatched meeting that produced nothing is the signature of a blocked/lobby'd guest
+            # join — exactly what the authenticated (Enterprise) join solves. Record it so Insights can
+            # surface the upgrade instead of leaving the user with silent, empty protocols.
+            if not segs and tenant is not None and tenant.join_mode == "guest":
+                _log(db, tid, "upsell", mid, reason="guest_join_no_transcript")
         elif tenant is not None and tenant.ingest_all and mid not in have:
             segs = vexa.transcript(mid).get("segments", [])
             db.add(Meeting(
@@ -103,6 +111,9 @@ def diarize_one(db, vexa: VexaClient, diar: DiarizerClient, tid: int) -> bool:
         select(Meeting).where(Meeting.status == "transcribed", Meeting.diarized_at.is_(None)).limit(1)
     ).first()
     if not row:
+        return False
+    vexa = tenant_vexa(db.get(Tenant, tid), vexa)
+    if vexa is None:
         return False
     meetings = {str(m.get("id")): m for m in vexa.completed_meetings()}
     m = meetings.get(row.meeting_id)
@@ -317,6 +328,24 @@ def _md_html(md: str) -> str:
     return "".join(out)
 
 
+def tenant_vexa(tenant, shared: VexaClient) -> VexaClient | None:
+    """Pick the Vexa deployment for this tenant's join tier.
+
+    guest → the shared pool. auth (Enterprise) → the tenant's own deployment, which holds their
+    authenticated bot session. An auth tenant WITHOUT that endpoint gets no bot at all: silently
+    falling back to a guest join would break the promise the tier was bought for (strict tenants
+    block guest joins), so we fail loudly instead."""
+    if tenant is None:
+        return shared
+    if tenant.join_mode == "auth":
+        if not tenant.vexa_endpoint:
+            log.error("tenant %s is on authenticated join but has no vexa_endpoint — not dispatching",
+                      tenant.id)
+            return None
+        return VexaClient(base=tenant.vexa_endpoint)
+    return shared
+
+
 def _within_lead(starts_at: str, now: dt.datetime, lead_s: int) -> bool:
     """True once the meeting starts within `lead_s` (already-running meetings included)."""
     if not starts_at:
@@ -348,6 +377,10 @@ def agent_dispatch(db, vexa: VexaClient, tid: int) -> None:
     native id. Vexa native id ↔ our planned row is what handover pairs on."""
     cfg = settings_store.get_all(db, tid)
     if not cfg.get("auto_join", True):
+        return
+    tenant = db.get(Tenant, tid)
+    vexa = tenant_vexa(tenant, vexa)
+    if vexa is None:
         return
     users = db.scalars(select(User).where(User.tenant_id == tid, User.active.is_(True))).all()
     if not users:

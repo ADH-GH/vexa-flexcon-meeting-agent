@@ -11,7 +11,7 @@ from .auth import auth_router
 from .config import settings
 from .db import init_db
 from .scheduler import start_scheduler
-from .web import agent_router, dash_router, health_router
+from .web import agent_router, billing_router, dash_router, health_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
@@ -33,4 +33,5 @@ app.add_middleware(SessionMiddleware, secret_key=settings.session_secret, https_
 app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(agent_router)
+app.include_router(billing_router)
 app.include_router(dash_router)

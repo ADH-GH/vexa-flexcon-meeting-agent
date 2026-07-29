@@ -1,0 +1,56 @@
+{% extends "_layout.html" %}
+{% block title %}Plan &amp; Nutzung · Meeting Agent{% endblock %}
+{% block body %}
+  <h2>Plan &amp; Nutzung</h2>
+  <p class="sub">Abrechnung nach Meeting-Minuten — inklusive Kontingent, darüber hinaus nach Verbrauch.</p>
+
+  <div class="cards">
+    <div class="card"><b>{{ tenant.tier if tenant else "–" }}</b><span>Tarif</span></div>
+    <div class="card"><b>{{ tenant.join_mode if tenant else "–" }}</b><span>Beitritt</span></div>
+    <div class="card"><b>{{ used }}</b><span>Minuten diesen Monat</span></div>
+    <div class="card"><b>{{ included }}</b><span>inklusive</span></div>
+    {% if over %}<div class="card"><b>{{ over }}</b><span>darüber (berechnet)</span></div>{% endif %}
+  </div>
+
+  {% set pct = ((used / included * 100) | round) if included else 0 %}
+  <div style="max-width:620px">
+    <div style="height:12px;border-radius:6px;background:#8883;overflow:hidden">
+      <div style="height:100%;width:{{ [pct, 100] | min }}%;
+                  background:{{ '#dc2626' if pct > 100 else '#2563eb' }}"></div>
+    </div>
+    <p class="muted" style="font-size:13px;margin-top:6px">
+      {{ pct }} % des Kontingents verbraucht{% if over %} — {{ over }} Minuten werden nachberechnet{% endif %}.
+    </p>
+  </div>
+
+  {% if tenant and tenant.tier == "trial" %}
+  <div class="ok" style="margin-top:20px">
+    <b>Testphase</b> — voller Funktionsumfang{% if tenant.trial_ends_at %}
+    bis {{ tenant.trial_ends_at.strftime("%d.%m.%Y") }}{% endif %}.
+    Der Tarif wird über den Marketplace gebucht.
+  </div>
+  {% endif %}
+
+  {% if blocked and tenant and tenant.join_mode == "guest" %}
+  <fieldset style="margin-top:22px;max-width:620px">
+    <legend>Enterprise empfohlen</legend>
+    <p style="margin-top:0">
+      <b>{{ blocked }}</b> Meeting{{ "s" if blocked != 1 }} konnte{{ "n" if blocked != 1 }} diesen Monat
+      nicht mitgeschnitten werden — typisch für Tenants, die den Gast-Beitritt sperren.
+    </p>
+    <p class="muted" style="margin-bottom:0">
+      Der <b>authentifizierte Beitritt</b> (Enterprise) tritt als angemeldeter Organisationsbenutzer bei
+      und funktioniert auch unter Conditional Access, MFA und gesperrter Lobby.
+    </p>
+  </fieldset>
+  {% endif %}
+
+  {% if tenant and tenant.join_mode == "auth" and not tenant.vexa_endpoint %}
+  <fieldset style="margin-top:22px;max-width:620px;border-color:#dc262699">
+    <legend>Einrichtung offen</legend>
+    <p style="margin:0">Dieser Mandant ist auf <b>authentifizierten Beitritt</b> gestellt, hat aber noch
+      keine eigene Vexa-Instanz hinterlegt — es werden vorerst <b>keine</b> Bots geschickt (statt still
+      als Gast beizutreten). Bitte die Instanz mit der Bot-Sitzung hinterlegen.</p>
+  </fieldset>
+  {% endif %}
+{% endblock %}

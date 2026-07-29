@@ -12,10 +12,13 @@ from ..config import settings
 
 
 class VexaClient:
-    """Vexa gateway (X-API-Key auth)."""
+    """Vexa gateway (X-API-Key auth).
 
-    def __init__(self) -> None:
-        self.base = settings.vexa_api_url.rstrip("/")
+    `base` overrides the shared deployment: guest joins all share one pool, while an Enterprise tenant
+    gets its own Vexa deployment holding that tenant's authenticated bot session."""
+
+    def __init__(self, base: str | None = None) -> None:
+        self.base = (base or settings.vexa_api_url).rstrip("/")
         self.h = {"X-API-Key": settings.vexa_api_key}
 
     def completed_meetings(self, limit: int = 100) -> list[dict]:

@@ -52,9 +52,20 @@ class Settings(BaseSettings):
     bootstrap_tenant_entra_id: str = "flexcon-local"
     bootstrap_tenant_name: str = "Flexcon (local)"
 
+    # --- billing (Stripe; the marketplace runs Checkout, we report metered usage) ---
+    stripe_api_key: str = ""
+    stripe_webhook_secret: str = ""
+    stripe_price_pro: str = ""          # per-seat licensed price
+    stripe_price_overage: str = ""      # metered price, per meeting-minute over the included quota
+    trial_days: int = 14
+
+    # --- marketplace provisioning (flexcon-ai.de calls us on connect) ---
+    marketplace_secret: str = ""
+
     # --- scheduler cadence (seconds) ---
     poll_postcall_s: int = 600
     poll_agent_s: int = 120
+    usage_report_interval_s: int = 86400   # nightly usage push to Stripe
 
     internal_domain: str = "@flexcon-it.de"
 

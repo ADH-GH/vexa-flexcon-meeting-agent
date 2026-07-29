@@ -3,15 +3,17 @@ Data tables are tenant-isolated by RLS, so every data read runs inside `tenant_s
 from __future__ import annotations
 
 import datetime as dt
+import hmac
 
 from fastapi import APIRouter, Depends, Form, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
 
-from . import apikeys, mailrender, settings_store
+from . import apikeys, billing, mailrender, settings_store
 from .auth import require_login
 from .clients import VexaClient
+from .config import settings
 from .db import get_session, tenant_scope
 from .models import ApiKey, EventLog, MailTemplate, Meeting, Tenant, User
 
@@ -19,6 +21,7 @@ templates = Jinja2Templates(directory="app/templates")
 
 health_router = APIRouter()
 agent_router = APIRouter(prefix="/agent", tags=["agent-connect"])
+billing_router = APIRouter(prefix="/billing", tags=["billing"])
 dash_router = APIRouter()
 
 
@@ -177,6 +180,87 @@ def insights(request: Request, principal=Depends(require_login), db=Depends(get_
                                 .order_by(EventLog.ts.desc()).limit(10)).all()
     return _page(request, "insights.html", principal, db, nav="insights", stats=stats, by_day=by_day, top=top,
                  errors=errors, days=days)
+
+
+# ----------------------------------------------------------------- billing: Stripe webhook
+@billing_router.post("/webhook")
+async def stripe_webhook(request: Request, db=Depends(get_session)):
+    """Stripe decides entitlements: subscription events set the tenant's tier and join mode.
+    An unverified signature is rejected outright — this endpoint grants paid capability."""
+    payload = await request.body()
+    if not billing.verify_signature(payload, request.headers.get("stripe-signature", "")):
+        raise HTTPException(status_code=400, detail="bad signature")
+    event = billing.parse_event(payload)
+    obj = ((event.get("data") or {}).get("object")) or {}
+    if not str(event.get("type", "")).startswith("customer.subscription."):
+        return {"ignored": event.get("type")}
+
+    tenant = _tenant_for_subscription(db, obj)
+    if not tenant:
+        return {"ignored": "unknown tenant", "customer": obj.get("customer")}
+    billing.apply_subscription(tenant, obj)
+    db.add(EventLog(tenant_id=tenant.id, kind="billing",
+                    detail={"event": event.get("type"), "tier": tenant.tier,
+                            "join_mode": tenant.join_mode}))
+    db.commit()
+    return {"ok": True, "tenant": tenant.id, "tier": tenant.tier}
+
+
+def _tenant_for_subscription(db, sub: dict):
+    """Map a Stripe subscription to a tenant: by stored customer id, else by the entra tenant id the
+    marketplace put in the subscription metadata at checkout."""
+    cust = sub.get("customer")
+    if isinstance(cust, str) and cust:
+        hit = db.scalars(select(Tenant).where(Tenant.stripe_customer_id == cust)).first()
+        if hit:
+            return hit
+    entra = (sub.get("metadata") or {}).get("entra_tenant_id")
+    if entra:
+        return db.scalars(select(Tenant).where(Tenant.entra_tenant_id == entra)).first()
+    return None
+
+
+@billing_router.post("/provision")
+def marketplace_provision(payload: dict, db=Depends(get_session),
+                          x_marketplace_secret: str = Header(default="")):
+    """Called by the marketplace when a customer connects the Meeting Agent: links the tenant to its
+    Stripe customer so the first subscription webhook can find it. Shared-secret authenticated."""
+    if not settings.marketplace_secret or \
+            not hmac.compare_digest(x_marketplace_secret, settings.marketplace_secret):
+        raise HTTPException(status_code=401, detail="unauthorized")
+    entra = payload.get("entra_tenant_id")
+    if not entra:
+        raise HTTPException(status_code=400, detail="entra_tenant_id required")
+    tenant = db.scalars(select(Tenant).where(Tenant.entra_tenant_id == entra)).first()
+    if not tenant:
+        tenant = Tenant(entra_tenant_id=entra, name=payload.get("name") or entra)
+        db.add(tenant)
+    tenant.stripe_customer_id = payload.get("stripe_customer_id") or tenant.stripe_customer_id
+    if not tenant.trial_ends_at and tenant.tier == "trial":
+        tenant.trial_ends_at = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=settings.trial_days)
+    db.commit()
+    return {"ok": True, "tenant": tenant.id, "tier": tenant.tier,
+            "trial_ends_at": tenant.trial_ends_at}
+
+
+# ----------------------------------------------------------------- dashboard: plan & usage
+@dash_router.get("/plan", response_class=HTMLResponse)
+def plan(request: Request, principal=Depends(require_login), db=Depends(get_session)):
+    tid = _tenant_id(principal, db)
+    t = db.get(Tenant, tid) if tid else None
+    used, blocked = 0, 0
+    if tid:
+        period_start = dt.datetime.now(dt.timezone.utc).replace(day=1, hour=0, minute=0, second=0,
+                                                                microsecond=0)
+        with tenant_scope(db, tid):
+            used = db.scalar(select(func.coalesce(func.sum(Meeting.billable_minutes), 0))
+                             .where(Meeting.updated_at >= period_start)) or 0
+            blocked = db.scalar(select(func.count()).select_from(EventLog)
+                                .where(EventLog.kind == "upsell",
+                                       EventLog.ts >= period_start)) or 0
+    included = (t.included_minutes if t else 0) or 0
+    return _page(request, "plan.html", principal, db, nav="plan", used=used, included=included,
+                 over=max(0, used - included), blocked=blocked)
 
 
 # ----------------------------------------------------------------- dashboard: agent connector + keys

@@ -9,7 +9,9 @@ from sqlalchemy import select
 
 import datetime as dt
 
-from . import auth, crypto, pipeline, settings_store
+from sqlalchemy import func
+
+from . import auth, billing, crypto, pipeline, settings_store
 from .clients import DiarizerClient, LLMClient, Mailer, VexaClient
 from .config import settings
 from .db import SessionLocal, tenant_scope
@@ -125,6 +127,57 @@ def _retention_tick() -> None:
         db.close()
 
 
+def _usage_tick() -> None:
+    """Report metered usage to Stripe: minutes ABOVE the tenant's included quota for this period.
+
+    Meetings are stamped `usage_reported_at` only after Stripe accepts the push, so a crash or retry
+    can never bill the same minutes twice. If a tenant has no metered item yet, nothing is stamped and
+    the minutes are simply reported later."""
+    if not billing.enabled():
+        return
+    db = SessionLocal()
+    try:
+        now = dt.datetime.now(dt.timezone.utc)
+        period_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        for t in _active_tenants(db):
+            with tenant_scope(db, t.id):
+                unreported = db.scalars(select(Meeting).where(
+                    Meeting.usage_reported_at.is_(None), Meeting.billable_minutes > 0)).all()
+                if not unreported:
+                    continue
+                # Meetings from a closed period are stamped but never billed — reporting them now
+                # would land the minutes in the wrong invoice.
+                this_period = [m for m in unreported if (m.updated_at or now) >= period_start]
+                stale = [m for m in unreported if m not in this_period]
+
+                included = max(0, t.included_minutes)
+                reported = db.scalar(
+                    select(func.coalesce(func.sum(Meeting.billable_minutes), 0)).where(
+                        Meeting.usage_reported_at.is_not(None),
+                        Meeting.updated_at >= period_start)) or 0
+                pending = sum(m.billable_minutes for m in this_period)
+                # Only the part above the included quota is metered — and only the part not billed yet.
+                billable = max(0, reported + pending - included) - max(0, reported - included)
+                try:
+                    if billing.report_usage(t, billable):
+                        for m in this_period + stale:
+                            m.usage_reported_at = now
+                        db.add(EventLog(tenant_id=t.id, kind="usage",
+                                        detail={"minutes_total": pending, "minutes_billed": billable,
+                                                "meetings": len(this_period), "skipped_stale": len(stale)}))
+                        db.commit()
+                except Exception as e:  # noqa: BLE001
+                    log.exception("usage report failed for tenant %s", t.id)
+                    db.rollback()
+                    db.add(EventLog(tenant_id=t.id, kind="error",
+                                    detail={"step": "usage", "err": str(e)[:300]}))
+                    db.commit()
+    except Exception:  # noqa: BLE001
+        log.exception("usage tick failed")
+    finally:
+        db.close()
+
+
 def start_scheduler() -> BackgroundScheduler:
     bootstrap_default_tenant()
     sched = BackgroundScheduler(timezone="UTC")
@@ -135,6 +188,8 @@ def start_scheduler() -> BackgroundScheduler:
     sched.add_job(_refresh_tick, "interval", seconds=settings.refresh_interval_s, id="refresh",
                   max_instances=1, coalesce=True)
     sched.add_job(_retention_tick, "interval", hours=24, id="retention",
+                  max_instances=1, coalesce=True)
+    sched.add_job(_usage_tick, "interval", seconds=settings.usage_report_interval_s, id="usage",
                   max_instances=1, coalesce=True)
     sched.start()
     log.info("scheduler started (postcall=%ss, agent=%ss)", settings.poll_postcall_s, settings.poll_agent_s)
