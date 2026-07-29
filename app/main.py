@@ -1,11 +1,14 @@
-"""App factory. On boot: create tables, start the scheduler, mount the API + dashboard."""
+"""App factory. On boot: create tables (+ RLS), start the scheduler, mount auth + API + dashboard."""
 from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from starlette.middleware.sessions import SessionMiddleware
 
+from .auth import auth_router
+from .config import settings
 from .db import init_db
 from .scheduler import start_scheduler
 from .web import agent_router, dash_router, health_router
@@ -25,7 +28,9 @@ async def lifespan(app: FastAPI):
         _sched.shutdown(wait=False)
 
 
-app = FastAPI(title="Vexa Flexcon Meeting Agent", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Vexa Flexcon Meeting Agent", version="0.2.0", lifespan=lifespan)
+app.add_middleware(SessionMiddleware, secret_key=settings.session_secret, https_only=False)
 app.include_router(health_router)
+app.include_router(auth_router)
 app.include_router(agent_router)
 app.include_router(dash_router)

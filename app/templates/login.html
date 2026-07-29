@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Anmelden · Vexa Flexcon Meeting Agent</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font: 15px/1.5 system-ui, sans-serif; display: grid; place-items: center; min-height: 100vh; margin: 0; }
+    .box { border: 1px solid #8883; border-radius: 14px; padding: 30px 34px; width: 340px; text-align: center; }
+    h1 { font-size: 18px; margin: 0 0 4px; }
+    p.sub { opacity: .6; margin: 0 0 22px; }
+    .ms { display: inline-flex; gap: 10px; align-items: center; justify-content: center; width: 100%;
+          padding: 11px; border: 1px solid #8886; border-radius: 8px; text-decoration: none; color: inherit;
+          font-weight: 600; }
+    .sep { margin: 20px 0; opacity: .4; font-size: 12px; }
+    input { width: 100%; padding: 9px; margin: 5px 0; border: 1px solid #8885; border-radius: 7px; box-sizing: border-box; background: transparent; color: inherit; }
+    button { width: 100%; padding: 10px; margin-top: 8px; border: 0; border-radius: 7px; background: #2563eb; color: #fff; font-weight: 600; cursor: pointer; }
+    .err { color: #dc2626; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h1>🎙️ Meeting Agent</h1>
+    <p class="sub">Einmal anmelden — der Rest läuft automatisch.</p>
+
+    <a class="ms" href="/auth/microsoft">
+      <svg width="18" height="18" viewBox="0 0 23 23" aria-hidden="true"><path fill="#f25022" d="M0 0h11v11H0z"/><path fill="#7fba00" d="M12 0h11v11H12z"/><path fill="#00a4ef" d="M0 12h11v11H0z"/><path fill="#ffb900" d="M12 12h11v11H12z"/></svg>
+      Sign in with Microsoft
+    </a>
+
+    <div class="sep">— oder Admin-Login —</div>
+    {% if request.query_params.get('error') %}<p class="err">Anmeldung fehlgeschlagen.</p>{% endif %}
+    <form method="post" action="/auth/local">
+      <input name="username" placeholder="Benutzer" autocomplete="username">
+      <input name="password" type="password" placeholder="Passwort" autocomplete="current-password">
+      <button type="submit">Anmelden</button>
+    </form>
+  </div>
+</body>
+</html>

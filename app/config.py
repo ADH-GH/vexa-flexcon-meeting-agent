@@ -40,9 +40,12 @@ class Settings(BaseSettings):
 
     # --- auth (Entra SSO primary + local user/password fallback) ---
     entra_sso_enabled: bool = True
+    oauth_authority_tenant: str = "organizations"   # multi-tenant: any work/school account
+    oauth_redirect_uri: str = "http://localhost:8080/auth/callback"
     admin_user: str = "admin"
     admin_password: str = ""          # local fallback login; set in .env
     session_secret: str = "change-me"
+    refresh_interval_s: int = 43200   # refresh-token keepalive (12 h)
     token_encryption_key: str = ""    # Fernet key for user refresh tokens at rest (set in prod)
 
     # --- bootstrap tenant (single-tenant testing continuity before onboarding lands) ---

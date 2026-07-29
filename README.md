@@ -9,9 +9,9 @@ Reuses the standalone [`diarizer`](https://github.com/ADH-GH/diarizer) service (
 pyannote community-1). Built by **Alf-David Heermann** ([@ADH-GH](https://github.com/ADH-GH), Flexcon IT)
 and **Claude** (Anthropic, Opus 4.8).
 
-> **Status: Phase 1 — multi-tenant foundation.** Runs structurally (compose up → dashboard + API +
-> scheduler + migrated Postgres 17.5) with **tenant isolation via Postgres RLS** and an **encrypted
-> token store**. Onboarding + the per-user auto-pipeline are next (see docs/MARKETPLACE-DESIGN.md).
+> **Status: Phase 2 — Entra onboarding.** Multi-tenant foundation (Postgres RLS + encrypted tokens) +
+> **"Sign in with Microsoft"** (OAuth auth-code + PKCE, auto-provisions tenant + user, refresh-token
+> worker) with a local admin fallback. The per-user auto-pipeline is next (see docs/MARKETPLACE-DESIGN.md).
 
 ## What it does (5 pipeline modules)
 

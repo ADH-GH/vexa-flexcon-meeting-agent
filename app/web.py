@@ -8,6 +8,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
 
+from .auth import require_login
 from .clients import VexaClient
 from .db import get_session, tenant_scope
 from .models import Meeting, Tenant, User
@@ -62,9 +63,9 @@ def protocol(meeting_id: str, tenant_id: int, db=Depends(get_session)):
 
 # --- Dashboard (server-rendered admin overview) ---
 @dash_router.get("/", response_class=HTMLResponse)
-def dashboard(request: Request, db=Depends(get_session)):
+def dashboard(request: Request, principal=Depends(require_login), db=Depends(get_session)):
     overview = _tenant_overview(db)
     return templates.TemplateResponse("dashboard.html", {
-        "request": request, "overview": overview,
+        "request": request, "overview": overview, "principal": principal,
         "tenants": db.scalar(select(func.count()).select_from(Tenant)) or 0,
         "users": db.scalar(select(func.count()).select_from(User)) or 0})

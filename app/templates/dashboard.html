@@ -28,6 +28,9 @@
       <a href="#">Mail &amp; Templates</a><a href="#">Insights &amp; Reports</a>
       <a href="#">Agent Connector</a><a href="#">API Keys</a><a href="/health">Health</a>
     </nav>
+    <span style="margin-left:auto;opacity:.6;font-size:13px">
+      {{ principal.email if principal else "" }} · <a href="/auth/logout" style="color:inherit">Logout</a>
+    </span>
   </header>
   <main>
     <div class="cards">

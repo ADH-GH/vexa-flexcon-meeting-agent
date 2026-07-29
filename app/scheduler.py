@@ -7,13 +7,35 @@ import logging
 from apscheduler.schedulers.background import BackgroundScheduler
 from sqlalchemy import select
 
+from . import auth, crypto, pipeline
 from .clients import DiarizerClient, LLMClient, Mailer, VexaClient
 from .config import settings
 from .db import SessionLocal, tenant_scope
-from .models import Tenant
-from . import pipeline
+from .models import Tenant, User
 
 log = logging.getLogger("scheduler")
+
+
+def _refresh_tick() -> None:
+    """Keep each onboarded user's delegated token alive (Microsoft rotates refresh tokens) and
+    detect revocation → deactivate. Control-plane query (no RLS)."""
+    db = SessionLocal()
+    try:
+        for u in db.scalars(select(User).where(User.active.is_(True))).all():
+            if not u.refresh_token_enc:
+                continue
+            try:
+                tok = auth.refresh(crypto.decrypt(u.refresh_token_enc))
+                if tok.get("refresh_token"):
+                    u.refresh_token_enc = crypto.encrypt(tok["refresh_token"])
+            except Exception:  # noqa: BLE001
+                log.warning("token refresh failed for user %s → deactivating", u.id)
+                u.active = False
+        db.commit()
+    except Exception:  # noqa: BLE001
+        log.exception("refresh tick failed")
+    finally:
+        db.close()
 
 
 def bootstrap_default_tenant() -> None:
@@ -74,6 +96,8 @@ def start_scheduler() -> BackgroundScheduler:
     sched.add_job(_postcall_tick, "interval", seconds=settings.poll_postcall_s, id="postcall",
                   max_instances=1, coalesce=True)
     sched.add_job(_agent_tick, "interval", seconds=settings.poll_agent_s, id="agent",
+                  max_instances=1, coalesce=True)
+    sched.add_job(_refresh_tick, "interval", seconds=settings.refresh_interval_s, id="refresh",
                   max_instances=1, coalesce=True)
     sched.start()
     log.info("scheduler started (postcall=%ss, agent=%ss)", settings.poll_postcall_s, settings.poll_agent_s)
