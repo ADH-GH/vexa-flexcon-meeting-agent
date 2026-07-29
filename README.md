@@ -56,10 +56,11 @@ app/
 
 ## Build phases
 
-1. ✅ Skeleton + **multi-tenancy** — FastAPI · Postgres 17.5 · scheduler (per-tenant) · tenants/users · +**RLS** · encrypted token store.
-2. Post-call pipeline — finish + live-test handover · diarize · summarize · deliver (SMTP + Graph, templates).
-3. Dashboard — settings (agent lead · LLM · mail templates · **Insights & Reports** · API keys).
-4. **agent-dispatch** + **Agent-Connect** API (Flexcon Agents).
-5. Cutover — run in parallel with the current setup, compare, then switch over.
+1. ✅ **Multi-tenancy** — FastAPI · Postgres 17.5 · per-tenant scheduler · tenants/users · tenant_id + **RLS** · encrypted token store.
+2. ✅ **Entra onboarding** — Sign in with Microsoft (auth-code + PKCE) · auto-provision tenant + user · refresh-token worker · local admin fallback.
+3. ✅ **Per-user auto-pipeline** — per-user calendar watch → plan on Vexa (guest join) → diarise → summarise → deliver to the owner (Flexcon sender).
+4. Dashboard — settings (agent lead · LLM · mail templates · **Insights & Reports** · **Agent Connector** · API keys).
+5. **Join tiers** (guest default + authenticated Enterprise) + **Stripe** billing (metered usage) + DSGVO (retention/erasure).
+6. Cutover — run in parallel with the current setup, compare, then switch over.
 
 Design: `docs/MARKETPLACE-DESIGN.md` (multi-tenant, zero-onboarding, tiered join) · architecture note in the flexcon-workbench.
