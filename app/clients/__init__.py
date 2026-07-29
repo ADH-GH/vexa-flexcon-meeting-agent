@@ -104,6 +104,18 @@ class Mailer:
         r.raise_for_status()
 
 
+def graph_calendar_view(access_token: str, start_iso: str, end_iso: str) -> list[dict]:
+    """A user's upcoming events (delegated token) — for the per-user agent dispatch."""
+    r = httpx.get(
+        "https://graph.microsoft.com/v1.0/me/calendarView",
+        params={"startDateTime": start_iso, "endDateTime": end_iso,
+                "$select": "subject,onlineMeeting,start,end,organizer", "$top": "100"},
+        headers={"Authorization": f"Bearer {access_token}", "Prefer": 'outlook.timezone="UTC"'},
+        timeout=30)
+    r.raise_for_status()
+    return r.json().get("value", [])
+
+
 def _graph_token() -> str:
     """Client-credentials token for MS Graph (mail + calendar)."""
     r = httpx.post(

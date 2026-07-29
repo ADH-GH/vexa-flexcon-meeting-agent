@@ -44,7 +44,7 @@ def bootstrap_default_tenant() -> None:
     try:
         if not db.scalars(select(Tenant).limit(1)).first():
             db.add(Tenant(entra_tenant_id=settings.bootstrap_tenant_entra_id,
-                          name=settings.bootstrap_tenant_name))
+                          name=settings.bootstrap_tenant_name, ingest_all=True))
             db.commit()
             log.info("bootstrapped default tenant %s", settings.bootstrap_tenant_name)
     finally:

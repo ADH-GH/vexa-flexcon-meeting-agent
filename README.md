@@ -9,9 +9,10 @@ Reuses the standalone [`diarizer`](https://github.com/ADH-GH/diarizer) service (
 pyannote community-1). Built by **Alf-David Heermann** ([@ADH-GH](https://github.com/ADH-GH), Flexcon IT)
 and **Claude** (Anthropic, Opus 4.8).
 
-> **Status: Phase 2 — Entra onboarding.** Multi-tenant foundation (Postgres RLS + encrypted tokens) +
-> **"Sign in with Microsoft"** (OAuth auth-code + PKCE, auto-provisions tenant + user, refresh-token
-> worker) with a local admin fallback. The per-user auto-pipeline is next (see docs/MARKETPLACE-DESIGN.md).
+> **Status: Phase 3 — per-user auto-pipeline.** After "Sign in with Microsoft", the agent reads each
+> user's calendar (their token), plans Teams meetings on Vexa (guest join), diarises, summarises, and
+> delivers the German protocol to the owner from the Flexcon sender — hands-free. Join tiers + dashboard
+> settings + Stripe billing are next (see docs/).
 
 ## What it does (5 pipeline modules)
 

@@ -7,16 +7,31 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import re
+import urllib.parse
 
 from sqlalchemy import select
 
-from ..clients import DiarizerClient, LLMClient, Mailer, VexaClient
+from ..auth import user_access_token
+from ..clients import DiarizerClient, LLMClient, Mailer, VexaClient, graph_calendar_view
 from ..config import settings
-from ..models import EventLog, Meeting
+from ..models import EventLog, Meeting, Tenant, User
 
 log = logging.getLogger("pipeline")
 
 CHUNK, OVERLAP = 12000, 1500
+DISPATCH_WINDOW_H = 24   # how far ahead to scan each user's calendar
+
+
+def token(url: str) -> str:
+    """Extract Vexa's native meeting id from a Teams join URL — classic thread token or /meet numeric
+    (matches how Vexa derives native_meeting_id, so handover can pair them)."""
+    u = urllib.parse.unquote(url or "")
+    m = re.search(r"(19:meeting_[A-Za-z0-9_\-]+@thread\.v2)", u)
+    if m:
+        return m.group(1)
+    m = re.search(r"/meet/(\d+)", u)
+    return m.group(1) if m else ""
 
 
 def _now():
@@ -29,26 +44,33 @@ def _log(db, tid, kind, meeting_id="", **detail):
 
 # --------------------------------------------------------------------------- handover
 def handover(db, vexa: VexaClient, tid: int) -> None:
-    """Land newly-completed Vexa meetings as rows (dedupe/audit)."""
-    have = {m for m in db.scalars(select(Meeting.meeting_id)).all()}
+    """Advance this tenant's meetings once Vexa reports them completed. Matches our dispatched
+    'planned' rows by native id; the bootstrap/legacy tenant (ingest_all) also ingests every completed
+    meeting (the calendar-invite flow), for testing continuity against a live Vexa."""
+    tenant = db.get(Tenant, tid)
+    planned = {p.native_id: p for p in
+               db.scalars(select(Meeting).where(Meeting.status == "planned")).all()}
+    have = {m for m in db.scalars(select(Meeting.meeting_id)).all() if m}
     for m in vexa.completed_meetings():
         mid = str(m.get("id"))
-        if mid in have:
-            continue
-        segs = vexa.transcript(mid).get("segments", [])
-        row = Meeting(
-            tenant_id=tid,
-            meeting_id=mid,
-            native_id=m.get("native_meeting_id", "") or "",
-            title=(m.get("data") or {}).get("title") or m.get("constructed_meeting_url") or "Meeting",
-            started_at=m.get("start_time") or "",
-            ended_at=m.get("end_time") or "",
-            language=_dominant_lang(segs),
-            segment_count=len(segs),
-            status="transcribed",
-        )
-        db.add(row)
-        _log(db, tid, "handover", mid, segments=len(segs))
+        nid = m.get("native_meeting_id", "") or ""
+        p = planned.get(nid)
+        if p is not None:
+            segs = vexa.transcript(mid).get("segments", [])
+            p.meeting_id = mid
+            p.title = p.title or (m.get("data") or {}).get("title") or "Meeting"
+            p.started_at = p.started_at or (m.get("start_time") or "")
+            p.ended_at = m.get("end_time") or ""
+            p.language, p.segment_count, p.status = _dominant_lang(segs), len(segs), "transcribed"
+            _log(db, tid, "handover", mid, segments=len(segs), planned=True)
+        elif tenant is not None and tenant.ingest_all and mid not in have:
+            segs = vexa.transcript(mid).get("segments", [])
+            db.add(Meeting(
+                tenant_id=tid, meeting_id=mid, native_id=nid,
+                title=(m.get("data") or {}).get("title") or m.get("constructed_meeting_url") or "Meeting",
+                started_at=m.get("start_time") or "", ended_at=m.get("end_time") or "",
+                language=_dominant_lang(segs), segment_count=len(segs), status="transcribed"))
+            _log(db, tid, "handover", mid, segments=len(segs))
     db.commit()
 
 
@@ -191,9 +213,15 @@ def deliver_one(db, mailer: Mailer, tid: int) -> bool:
     row = db.scalars(select(Meeting).where(Meeting.status == "summarized").limit(1)).first()
     if not row:
         return False
-    # TODO(next): calendar recipient resolution + external owner-approval; for now internal policy
-    #             falls back to the configured owner. Templates rendered from mail_templates.
-    recipients = (row.participants or {}).get("internal") or [settings.mail_from]
+    # Deliver to the owning user (the person whose calendar we watched); FROM the Flexcon sender.
+    # (Full attendee resolution + external owner-approval is a later step; templates from mail_templates.)
+    recipients = []
+    if row.user_id:
+        u = db.get(User, row.user_id)
+        if u and u.email:
+            recipients = [u.email]
+    if not recipients:
+        recipients = [settings.mail_from]
     html = f"<h3>{row.title}</h3>{_md_html(row.summary)}"
     try:
         mailer.send(recipients, f"Protokoll: {row.title}", html)
@@ -226,8 +254,38 @@ def _md_html(md: str) -> str:
     return "".join(out)
 
 
-# --------------------------------------------------------------------------- agent dispatch (phase 2)
+# --------------------------------------------------------------------------- agent dispatch (per user)
 def agent_dispatch(db, vexa: VexaClient, tid: int) -> None:
-    """Calendar (Graph) -> plan upcoming meetings on Vexa with a configurable join lead.
-    TODO(next): Graph calendarView for the configured account, dedupe, dispatch with lead time."""
-    return
+    """Per user: read the calendar with the user's delegated token, plan any upcoming Teams meeting on
+    Vexa (guest join; Vexa auto-joins at its own lead), and create an OWNED 'planned' row. Dedupe by
+    native id. Vexa native id ↔ our planned row is what handover pairs on."""
+    users = db.scalars(select(User).where(User.tenant_id == tid, User.active.is_(True))).all()
+    if not users:
+        return
+    now = dt.datetime.now(dt.timezone.utc)
+    start, end = now.isoformat(), (now + dt.timedelta(hours=DISPATCH_WINDOW_H)).isoformat()
+    known = {r for r in db.scalars(select(Meeting.native_id)).all() if r}
+    for user in users:
+        at = user_access_token(db, user)
+        if not at:
+            continue
+        try:
+            events = graph_calendar_view(at, start, end)
+        except Exception as e:  # noqa: BLE001
+            _log(db, tid, "error", "", step="calendar", err=str(e)[:200], user=user.id)
+            continue
+        for ev in events:
+            nid = token(((ev.get("onlineMeeting") or {}).get("joinUrl")) or "")
+            if not nid or nid in known:
+                continue
+            try:
+                vexa.dispatch_bot((ev.get("onlineMeeting") or {}).get("joinUrl"))
+            except Exception as e:  # noqa: BLE001
+                _log(db, tid, "error", nid, step="dispatch", err=str(e)[:200])
+                continue
+            db.add(Meeting(tenant_id=tid, user_id=user.id, native_id=nid, meeting_id=nid,
+                           title=ev.get("subject") or "Meeting",
+                           started_at=((ev.get("start") or {}).get("dateTime")) or "", status="planned"))
+            known.add(nid)
+            _log(db, tid, "dispatch", nid, user=user.id)
+    db.commit()

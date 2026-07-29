@@ -70,6 +70,23 @@ def refresh(refresh_token: str) -> dict:
     return _token({"grant_type": "refresh_token", "refresh_token": refresh_token, "scope": SCOPES})
 
 
+def user_access_token(db, user) -> str | None:
+    """Fresh delegated access token for a user (refresh + persist the rotated refresh token).
+    On failure (revoked consent) the user is deactivated. Used by the per-user pipeline."""
+    if not user.refresh_token_enc:
+        return None
+    try:
+        tok = refresh(crypto.decrypt(user.refresh_token_enc))
+    except Exception:  # noqa: BLE001
+        user.active = False
+        db.commit()
+        return None
+    if tok.get("refresh_token"):
+        user.refresh_token_enc = crypto.encrypt(tok["refresh_token"])
+        db.commit()
+    return tok.get("access_token")
+
+
 def _claims(id_token: str) -> dict:
     """Decode id_token claims. It comes over TLS from the token endpoint (back-channel), so decoding
     is safe for identity extraction; TODO harden with JWKS signature/audience verification."""

@@ -27,6 +27,9 @@ class Tenant(Base):
     join_mode: Mapped[str] = mapped_column(String, default="guest")   # guest | auth
     retention_days: Mapped[int] = mapped_column(Integer, default=90)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # legacy/bootstrap tenant: ingest ALL completed Vexa meetings (calendar-invite flow) rather than
+    # only the ones this app dispatched per user. Onboarded tenants keep this False.
+    ingest_all: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
