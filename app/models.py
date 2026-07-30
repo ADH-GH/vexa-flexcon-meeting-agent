@@ -21,6 +21,10 @@ class Tenant(Base):
     __tablename__ = "tenants"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # own-mode: the Entra tenant id. marketplace-mode: "mp:user:<marketplace user id>" — deliberately
+    # ONE TENANT PER SUBSCRIBER, because the tenant is our RLS isolation boundary: grouping several
+    # subscribers into one tenant would let them read each other's meetings. Org-wide grouping is a
+    # product decision to make explicitly, not a side effect of the key we chose.
     entra_tenant_id: Mapped[str] = mapped_column(String, unique=True, index=True)
     name: Mapped[str] = mapped_column(String, default="")
     tier: Mapped[str] = mapped_column(String, default="trial")        # trial | pro | enterprise
@@ -43,19 +47,29 @@ class Tenant(Base):
 
 
 class User(Base):
-    """A person onboarded via MS-SSO. Their delegated refresh token is stored ENCRYPTED."""
+    """A person entitled to the agent.
+
+    Identity comes from one of two sources (see `config.identity_source`):
+      * "own"         — our Entra sign-in; `external_id` is the Entra object id and we hold an
+                        encrypted refresh token ourselves.
+      * "marketplace" — the marketplace owns the consent; `external_id` is the marketplace user id and
+                        `connection_id` points at the OAuth connection it stores. We keep NO token
+                        here — tokens are fetched per use via the marketplace (they are encrypted at
+                        rest with a key only it holds).
+    """
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), index=True)
-    entra_object_id: Mapped[str] = mapped_column(String, index=True)
+    external_id: Mapped[str] = mapped_column(String, index=True)
+    connection_id: Mapped[str] = mapped_column(String, default="")     # marketplace OAuth connection
     email: Mapped[str] = mapped_column(String, index=True)
     display_name: Mapped[str] = mapped_column(String, default="")
-    refresh_token_enc: Mapped[str] = mapped_column(Text, default="")   # Fernet ciphertext
+    refresh_token_enc: Mapped[str] = mapped_column(Text, default="")   # own-mode only (Fernet)
     prefs: Mapped[dict] = mapped_column(JSONB, default=dict)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now)
-    __table_args__ = (UniqueConstraint("tenant_id", "entra_object_id", name="uq_user_tenant_obj"),)
+    __table_args__ = (UniqueConstraint("tenant_id", "external_id", name="uq_user_tenant_ext"),)
 
 
 # ------------------------------------------------------------------ data plane (RLS by tenant_id)

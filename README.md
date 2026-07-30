@@ -35,6 +35,9 @@ GPU job per tick).
 ## Stack & decisions
 
 - Python 3.12 · FastAPI (API + **server-rendered** dashboard) · APScheduler · SQLAlchemy · **Postgres 17.5**
+- **Two identity modes** (`IDENTITY_SOURCE`): `marketplace` — the Flexcon AI Marketplace owns the
+  Microsoft consent and Stripe, we read entitlement + the user's Graph token from it (one consent for
+  the user, one place billing lives); `own` — self-contained Entra OAuth + Stripe, for direct/on-prem sales
 - Auth: **Entra SSO** primary + **local user/password fallback**
 - Calendar: **MS Graph** · Mail: **SMTP or Graph** (configurable), selectable templates
 - Dashboard adds **Insights & Reports**; the **Agent Connector** (Flexcon Agents) is a headline value-add

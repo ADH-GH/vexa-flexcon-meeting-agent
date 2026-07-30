@@ -16,7 +16,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 
-from . import crypto
+from . import crypto, marketplace
 from .config import settings
 from .db import get_session
 from .models import Tenant, User
@@ -71,8 +71,13 @@ def refresh(refresh_token: str) -> dict:
 
 
 def user_access_token(db, user) -> str | None:
-    """Fresh delegated access token for a user (refresh + persist the rotated refresh token).
-    On failure (revoked consent) the user is deactivated. Used by the per-user pipeline."""
+    """Fresh delegated Graph token for a user — the pipeline's single way in.
+
+    In marketplace mode the consent lives there, so we ask it for a token and hold none ourselves.
+    In own mode we refresh with our stored token and persist the rotated one. Either way a failure
+    means "no token", never a fallback to someone else's."""
+    if marketplace.enabled():
+        return marketplace.graph_token(user.connection_id)
     if not user.refresh_token_enc:
         return None
     try:
@@ -107,9 +112,9 @@ def provision(db, tokens: dict) -> User:
         db.add(tenant)
         db.flush()
     user = db.scalars(select(User).where(User.tenant_id == tenant.id,
-                                         User.entra_object_id == oid)).first()
+                                         User.external_id == oid)).first()
     if not user:
-        user = User(tenant_id=tenant.id, entra_object_id=oid)
+        user = User(tenant_id=tenant.id, external_id=oid)
         db.add(user)
     user.email, user.display_name, user.active = email, c.get("name") or email, True
     if tokens.get("refresh_token"):

@@ -11,7 +11,7 @@ import datetime as dt
 
 from sqlalchemy import func
 
-from . import auth, billing, crypto, pipeline, settings_store
+from . import auth, billing, crypto, marketplace, pipeline, settings_store
 from .clients import DiarizerClient, LLMClient, Mailer, VexaClient
 from .config import settings
 from .db import SessionLocal, tenant_scope
@@ -127,6 +127,64 @@ def _retention_tick() -> None:
         db.close()
 
 
+def _marketplace_sync_tick() -> None:
+    """Mirror the marketplace's entitlements into our control plane.
+
+    The marketplace decides who may use the agent (subscription live + agent switched on); we only
+    reflect that. Consequences handled here:
+      * a NEW subscriber gets a tenant of their own (RLS boundary — never share one, see models.py)
+      * a subscriber who cancelled or switched the agent off is DEACTIVATED, so the pipeline stops
+        touching their calendar. Entitlement that only ever grows is how cancelled customers keep
+        getting served.
+    """
+    if not marketplace.enabled():
+        return
+    db = SessionLocal()
+    try:
+        subs = marketplace.active_subscribers()
+        seen: set[str] = set()
+        for s in subs:
+            uid = str(s.get("user_id") or "")
+            if not uid:
+                continue
+            seen.add(uid)
+            key = f"mp:user:{uid}"
+            tenant = db.scalars(select(Tenant).where(Tenant.entra_tenant_id == key)).first()
+            if not tenant:
+                tenant = Tenant(entra_tenant_id=key, name=marketplace.user_email(uid) or key)
+                db.add(tenant)
+                db.flush()
+            # Entitlement is the marketplace's word, every sync.
+            tier = str(s.get("tier") or "pro")
+            tenant.tier = tier
+            tenant.join_mode = "auth" if "enterprise" in tier.lower() else "guest"
+            tenant.active = True
+
+            user = db.scalars(select(User).where(User.tenant_id == tenant.id,
+                                                 User.external_id == uid)).first()
+            if not user:
+                user = User(tenant_id=tenant.id, external_id=uid)
+                db.add(user)
+            user.connection_id = str(s.get("connection_id") or "")
+            user.email = user.email or marketplace.user_email(uid)
+            user.active = True
+
+        # Anyone we know but the marketplace no longer lists is no longer entitled.
+        for u in db.scalars(select(User).where(User.active.is_(True))).all():
+            t = db.get(Tenant, u.tenant_id)
+            if t and t.entra_tenant_id.startswith("mp:user:") and u.external_id not in seen:
+                u.active = False
+                t.active = False
+                log.info("marketplace: entitlement gone for user %s — deactivated", u.external_id)
+        db.commit()
+        log.info("marketplace sync: %d active subscriber(s)", len(seen))
+    except Exception:  # noqa: BLE001
+        log.exception("marketplace sync failed")
+        db.rollback()
+    finally:
+        db.close()
+
+
 def _usage_tick() -> None:
     """Report metered usage to Stripe: minutes ABOVE the tenant's included quota for this period.
 
@@ -191,6 +249,12 @@ def start_scheduler() -> BackgroundScheduler:
                   max_instances=1, coalesce=True)
     sched.add_job(_usage_tick, "interval", seconds=settings.usage_report_interval_s, id="usage",
                   max_instances=1, coalesce=True)
+    if marketplace.enabled():
+        # Entitlements come from the marketplace; pull them before the first pipeline tick so a new
+        # subscriber isn't ignored for a full interval.
+        sched.add_job(_marketplace_sync_tick, "interval", seconds=settings.marketplace_sync_s,
+                      id="mp-sync", max_instances=1, coalesce=True,
+                      next_run_time=dt.datetime.now(dt.timezone.utc))
     sched.start()
     log.info("scheduler started (postcall=%ss, agent=%ss)", settings.poll_postcall_s, settings.poll_agent_s)
     return sched

@@ -52,7 +52,17 @@ class Settings(BaseSettings):
     bootstrap_tenant_entra_id: str = "flexcon-local"
     bootstrap_tenant_name: str = "Flexcon (local)"
 
-    # --- billing (Stripe; the marketplace runs Checkout, we report metered usage) ---
+    # --- where identity + entitlement come from ---
+    # "marketplace" — the Flexcon AI Marketplace owns the Microsoft consent and Stripe; we read from
+    #                 it (no second consent for the user, no duplicated billing).
+    # "own"         — self-contained: our own Entra OAuth + Stripe, for direct / on-prem sales.
+    identity_source: str = "own"
+    marketplace_supabase_url: str = ""        # https://<ref>.supabase.co
+    marketplace_service_role_key: str = ""    # service-role key: bypasses RLS — treat as top secret
+    marketplace_agent_slug: str = "meeting-agent"
+    marketplace_sync_s: int = 900             # how often to re-read entitlements
+
+    # --- billing (Stripe; only used in identity_source="own") ---
     stripe_api_key: str = ""
     stripe_webhook_secret: str = ""
     stripe_price_pro: str = ""          # per-seat licensed price
